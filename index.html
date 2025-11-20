@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Operator Training Matrix</title>
+
+  <!-- Simple styling -->
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f4f4;
+      padding: 20px;
+    }
+    h1 {
+      margin-bottom: 10px;
+    }
+    .table-wrapper {
+      background: white;
+      padding: 10px;
+      border-radius: 4px;
+      box-shadow: 0 0 4px rgba(0,0,0,0.1);
+      overflow-x: auto; /* horizontal scroll for wide matrix */
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    table {
+      border-collapse: collapse;
+      min-width: 600px;
+      font-size: 12px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 4px 6px;
+      text-align: left;
+      white-space: nowrap; /* keep names & part numbers on one line */
+    }
+    th {
+      background: #eee;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+  </style>
+</head>
+<body>
+  <h1>Operator Training Matrix</h1>
+  <p>This is pulled directly from <code>training_data.csv</code>.</p>
+
+  <div class="table-wrapper">
+    <table id="trainingTable"></table>
+  </div>
+
+  <!-- PapaParse CSV library -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <script>
+    async function loadCSV() {
+      try {
+        const response = await fetch('training_data.csv');
+        const csvText = await response.text();
+
+        // Parse CSV (handles quotes, commas inside names, etc.)
+        const parsed = Papa.parse(csvText, {
+          skipEmptyLines: true
+        });
+
+        const rows = parsed.data;
+        const table = document.getElementById('trainingTable');
+
+        rows.forEach((row, rowIndex) => {
+          const tr = document.createElement('tr');
+
+          row.forEach(cell => {
+            const cellEl = document.createElement(rowIndex === 0 ? 'th' : 'td');
+            cellEl.textContent = cell;
+            tr.appendChild(cellEl);
+          });
+
+          table.appendChild(tr);
+        });
+      } catch (err) {
+        console.error('Error loading CSV:', err);
+        alert('Could not load training_data.csv – check file name and location.');
+      }
+    }
+
+    loadCSV();
+  </script>
+</body>
+</html>
