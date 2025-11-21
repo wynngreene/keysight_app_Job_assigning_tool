@@ -146,7 +146,13 @@ function populatePartDropdown() {
     select.appendChild(opt);
   });
 
-  select.addEventListener("change", handlePartSelectionChange);
+  // When dropdown changes, show part results
+  select.addEventListener("change", () => {
+    const pn = select.value;
+    const input = document.getElementById("partInput");
+    if (input) input.value = pn; // sync input for clarity
+    showPartResults(pn);
+  });
 }
 
 /**
@@ -179,19 +185,49 @@ function handleOperatorFilterChange() {
 }
 
 /**
- * When a part number is selected, show which operators are trained
- * on that part in the #partResult div.
+ * Handle the Go button / scan input for part number
  */
-function handlePartSelectionChange() {
+function handlePartInput() {
+  const input = document.getElementById("partInput");
   const select = document.getElementById("partSelect");
-  const resultDiv = document.getElementById("partResult");
-  if (!select || !resultDiv) return;
+  if (!input) return;
 
-  const partNumber = select.value;
+  const raw = input.value.trim();
+  const partNumber = raw;
+
+  if (!partNumber) {
+    showPartResults(""); // clears result
+    if (select) select.value = "";
+    return;
+  }
+
+  // Try to sync dropdown if exact match exists (case-insensitive)
+  if (select) {
+    let matchedValue = "";
+    for (let i = 0; i < select.options.length; i++) {
+      const optVal = select.options[i].value;
+      if (optVal && optVal.toUpperCase() === partNumber.toUpperCase()) {
+        matchedValue = optVal;
+        break;
+      }
+    }
+    select.value = matchedValue || "";
+  }
+
+  showPartResults(partNumber);
+}
+
+/**
+ * Shared logic: given a partNumber string, show which operators are trained on it.
+ */
+function showPartResults(partNumber) {
+  const resultDiv = document.getElementById("partResult");
+  if (!resultDiv) return;
+
   resultDiv.innerHTML = "";
 
   if (!partNumber) {
-    // No part selected
+    // Nothing selected/typed
     return;
   }
 
@@ -200,14 +236,20 @@ function handlePartSelectionChange() {
     return;
   }
 
-  // 1) Find all rows that match the selected Part Number
+  const searchPN = partNumber.trim().toUpperCase();
+
+  // 1) Find all rows that match the selected Part Number (case-insensitive)
   const matchingRows = TM_ALL_ROWS.filter(row => {
-    const pn = (row[TM_PARTNUMBER_COLUMN] || "").trim();
-    return pn === partNumber;
+    const pn = (row[TM_PARTNUMBER_COLUMN] || "").trim().toUpperCase();
+    return pn === searchPN;
   });
 
   if (!matchingRows.length) {
-    resultDiv.textContent = `No rows found for part ${partNumber}.`;
+    resultDiv.innerHTML = `
+      <div class="alert alert-warning mb-0">
+        No rows found for part <code>${partNumber}</code>.
+      </div>
+    `;
     return;
   }
 
