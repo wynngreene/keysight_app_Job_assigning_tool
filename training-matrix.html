@@ -61,14 +61,28 @@
     </div>
   </div>
 
-  <!-- Part number selector -->
+  <!-- Part number selector + scan input -->
   <div class="row mb-3">
-    <div class="col-12 col-md-6">
-      <label for="partSelect" class="form-label fw-semibold">Check Part Number</label>
-      <select id="partSelect" class="form-select">
-        <option value="">Select Part Number</option>
-        <!-- Options injected from JS -->
-      </select>
+    <div class="col-12 col-md-8">
+      <label class="form-label fw-semibold">Check Part Number</label>
+      <div class="input-group">
+        <select id="partSelect" class="form-select">
+          <option value="">Select Part Number</option>
+          <!-- Options injected from JS -->
+        </select>
+        <input
+          type="text"
+          id="partInput"
+          class="form-control"
+          placeholder="Or scan / type part number"
+        >
+        <button class="btn btn-outline-primary" type="button" onclick="handlePartInput()">
+          Go
+        </button>
+      </div>
+      <div class="form-text">
+        Choose from the list or scan/type a part number, then press <strong>Go</strong>.
+      </div>
     </div>
   </div>
 
