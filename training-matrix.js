@@ -5,7 +5,11 @@ let TM_ALL_ROWS = [];
 let TM_OPERATOR_START = -1;
 let TM_OPERATOR_END = -1;
 let TM_TRAINERS_COLUMN = -1;
+let TM_STATUS_COLUMN = -1; // last visible column (we show up to this one)
 
+/**
+ * Load and parse the CSV, detect structure, and render
+ */
 async function loadTrainingMatrix() {
   try {
     const response = await fetch("training_data.csv");
@@ -19,7 +23,7 @@ async function loadTrainingMatrix() {
       return;
     }
 
-    // Find header row
+    // 1) Find the real header row
     let headerIndex = -1;
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
@@ -35,21 +39,23 @@ async function loadTrainingMatrix() {
     }
 
     const headerRow = rows[headerIndex];
-    TM_HEADERS = headerRow.slice(1); // drop blank col 0
 
-    // Data rows
+    // 2) Drop the first blank column (index 0)
+    TM_HEADERS = headerRow.slice(1);
+
+    // 3) Collect data rows (non-empty Family column)
     TM_ALL_ROWS = rows
       .slice(headerIndex + 1)
       .filter(r => r.length > 2 && (r[1] || "").trim() !== "")
       .map(r => r.slice(1));
 
-    // Detect operator block
-    detectOperatorRange(TM_HEADERS);
+    // 4) Detect operator block and Status column
+    detectColumns(TM_HEADERS);
 
-    // Populate dropdown
+    // 5) Populate operator dropdown
     populateOperatorDropdown();
 
-    // Initial render
+    // 6) Initial render (all rows visible, but only columns up to Status)
     renderTrainingTable(TM_HEADERS, TM_ALL_ROWS);
 
   } catch (err) {
@@ -57,23 +63,39 @@ async function loadTrainingMatrix() {
   }
 }
 
-// Detect columns Eden -> Nikki, NPI -> Trainers
-function detectOperatorRange(headers) {
+/**
+ * Detect:
+ *  - Operator range: Eden → Nikki, NPI
+ *  - Trainers block end: "Trainers"
+ *  - Status column (last visible column)
+ */
+function detectColumns(headers) {
   TM_OPERATOR_START = headers.findIndex(h => (h || "").trim() === "Eden");
   TM_OPERATOR_END = headers.findIndex(h => (h || "").trim() === "Nikki, NPI");
   TM_TRAINERS_COLUMN = headers.findIndex(h => (h || "").trim() === "Trainers");
+  TM_STATUS_COLUMN = headers.findIndex(h => (h || "").trim() === "Status");
 
   if (TM_OPERATOR_START === -1 || TM_OPERATOR_END === -1 || TM_TRAINERS_COLUMN === -1) {
     console.warn("Operator block incomplete: Eden → Nikki, NPI → Trainers");
   }
+  if (TM_STATUS_COLUMN === -1) {
+    console.warn("Could not find 'Status' column. All columns will be shown.");
+  }
 }
 
-// Populate operator dropdown
+/**
+ * Populate operator dropdown using headers Eden → Nikki, NPI
+ */
 function populateOperatorDropdown() {
   const select = document.getElementById("operatorSelect");
   if (!select) return;
 
   while (select.options.length > 1) select.remove(1);
+
+  if (TM_OPERATOR_START === -1 || TM_OPERATOR_END === -1) {
+    // Can't find operators; leave dropdown with just "All"
+    return;
+  }
 
   for (let i = TM_OPERATOR_START; i <= TM_OPERATOR_END; i++) {
     const name = (TM_HEADERS[i] || "").trim();
@@ -88,12 +110,18 @@ function populateOperatorDropdown() {
   select.addEventListener("change", handleOperatorFilterChange);
 }
 
-// Filter rows when operator selected
+/**
+ * Filter rows when an operator is selected
+ * (even though operator columns are hidden in the display)
+ */
 function handleOperatorFilterChange() {
   const select = document.getElementById("operatorSelect");
+  if (!select) return;
+
   const selectedName = select.value;
 
   if (!selectedName) {
+    // "All Operators"
     renderTrainingTable(TM_HEADERS, TM_ALL_ROWS);
     return;
   }
@@ -112,22 +140,50 @@ function handleOperatorFilterChange() {
   renderTrainingTable(TM_HEADERS, filteredRows);
 }
 
-// Render matrix but HIDE operator block columns
+/**
+ * Decide which column indices should be visible in the table
+ * We show:
+ *  - If we have a Status column: columns 0..Status
+ *  - If not: we show all non-operator/non-trainer columns (fallback)
+ */
+function getVisibleColumnIndices() {
+  const indices = [];
+
+  if (TM_STATUS_COLUMN !== -1) {
+    for (let i = 0; i < TM_HEADERS.length; i++) {
+      if (i <= TM_STATUS_COLUMN) {
+        indices.push(i);
+      }
+    }
+  } else {
+    // Fallback: hide operator block, show everything else
+    for (let i = 0; i < TM_HEADERS.length; i++) {
+      if (i >= TM_OPERATOR_START && i <= TM_TRAINERS_COLUMN) continue;
+      indices.push(i);
+    }
+  }
+
+  return indices;
+}
+
+/**
+ * Render the matrix with only the chosen visible columns.
+ */
 function renderTrainingTable(headers, dataRows) {
   const table = document.getElementById("trainingTable");
   if (!table) return;
 
   table.innerHTML = "";
 
+  const visibleCols = getVisibleColumnIndices();
+
   // THEAD
   const thead = document.createElement("thead");
   const headerTr = document.createElement("tr");
 
-  headers.forEach((h, colIndex) => {
-    if (colIndex >= TM_OPERATOR_START && colIndex <= TM_TRAINERS_COLUMN) return;
-
+  visibleCols.forEach(colIndex => {
     const th = document.createElement("th");
-    th.textContent = (h || "").trim();
+    th.textContent = (headers[colIndex] || "").trim();
     headerTr.appendChild(th);
   });
 
@@ -140,9 +196,7 @@ function renderTrainingTable(headers, dataRows) {
   dataRows.forEach(row => {
     const tr = document.createElement("tr");
 
-    headers.forEach((_, colIndex) => {
-      if (colIndex >= TM_OPERATOR_START && colIndex <= TM_TRAINERS_COLUMN) return;
-
+    visibleCols.forEach(colIndex => {
       const td = document.createElement("td");
       td.textContent = row[colIndex] != null ? row[colIndex] : "";
       tr.appendChild(td);
@@ -154,4 +208,5 @@ function renderTrainingTable(headers, dataRows) {
   table.appendChild(tbody);
 }
 
+// Init
 document.addEventListener("DOMContentLoaded", loadTrainingMatrix);
