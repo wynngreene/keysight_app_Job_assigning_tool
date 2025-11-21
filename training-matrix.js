@@ -5,7 +5,8 @@ let TM_ALL_ROWS = [];
 let TM_OPERATOR_START = -1;
 let TM_OPERATOR_END = -1;
 let TM_TRAINERS_COLUMN = -1;
-let TM_STATUS_COLUMN = -1; // last visible column (we show up to this one)
+let TM_STATUS_COLUMN = -1;      // last visible column in table
+let TM_PARTNUMBER_COLUMN = -1;  // part number column index
 
 /**
  * Load and parse the CSV, detect structure, and render
@@ -49,13 +50,14 @@ async function loadTrainingMatrix() {
       .filter(r => r.length > 2 && (r[1] || "").trim() !== "")
       .map(r => r.slice(1));
 
-    // 4) Detect operator block and Status column
+    // 4) Detect operator block, Status column, and Part Number column
     detectColumns(TM_HEADERS);
 
-    // 5) Populate operator dropdown
+    // 5) Populate dropdowns
     populateOperatorDropdown();
+    populatePartDropdown();
 
-    // 6) Initial render (all rows visible, but only columns up to Status)
+    // 6) Initial render (all rows visible, only up to Status)
     renderTrainingTable(TM_HEADERS, TM_ALL_ROWS);
 
   } catch (err) {
@@ -68,18 +70,23 @@ async function loadTrainingMatrix() {
  *  - Operator range: Eden → Nikki, NPI
  *  - Trainers block end: "Trainers"
  *  - Status column (last visible column)
+ *  - Part Number column
  */
 function detectColumns(headers) {
   TM_OPERATOR_START = headers.findIndex(h => (h || "").trim() === "Eden");
   TM_OPERATOR_END = headers.findIndex(h => (h || "").trim() === "Nikki, NPI");
   TM_TRAINERS_COLUMN = headers.findIndex(h => (h || "").trim() === "Trainers");
   TM_STATUS_COLUMN = headers.findIndex(h => (h || "").trim() === "Status");
+  TM_PARTNUMBER_COLUMN = headers.findIndex(h => (h || "").trim() === "Part Number");
 
   if (TM_OPERATOR_START === -1 || TM_OPERATOR_END === -1 || TM_TRAINERS_COLUMN === -1) {
     console.warn("Operator block incomplete: Eden → Nikki, NPI → Trainers");
   }
   if (TM_STATUS_COLUMN === -1) {
     console.warn("Could not find 'Status' column. All columns will be shown.");
+  }
+  if (TM_PARTNUMBER_COLUMN === -1) {
+    console.warn("Could not find 'Part Number' column. Part dropdown will be empty.");
   }
 }
 
@@ -111,8 +118,39 @@ function populateOperatorDropdown() {
 }
 
 /**
- * Filter rows when an operator is selected
- * (even though operator columns are hidden in the display)
+ * Populate part-number dropdown from the Part Number column
+ */
+function populatePartDropdown() {
+  const select = document.getElementById("partSelect");
+  if (!select) return;
+
+  while (select.options.length > 1) select.remove(1);
+
+  if (TM_PARTNUMBER_COLUMN === -1) {
+    return;
+  }
+
+  const partSet = new Set();
+
+  TM_ALL_ROWS.forEach(row => {
+    const pn = (row[TM_PARTNUMBER_COLUMN] || "").trim();
+    if (pn) partSet.add(pn);
+  });
+
+  const partList = Array.from(partSet).sort();
+
+  partList.forEach(pn => {
+    const opt = document.createElement("option");
+    opt.value = pn;
+    opt.textContent = pn;
+    select.appendChild(opt);
+  });
+
+  select.addEventListener("change", handlePartSelectionChange);
+}
+
+/**
+ * Filter rows when an operator is selected (matrix display)
  */
 function handleOperatorFilterChange() {
   const select = document.getElementById("operatorSelect");
@@ -138,6 +176,96 @@ function handleOperatorFilterChange() {
   });
 
   renderTrainingTable(TM_HEADERS, filteredRows);
+}
+
+/**
+ * When a part number is selected, show which operators are trained
+ * on that part in the #partResult div.
+ */
+function handlePartSelectionChange() {
+  const select = document.getElementById("partSelect");
+  const resultDiv = document.getElementById("partResult");
+  if (!select || !resultDiv) return;
+
+  const partNumber = select.value;
+  resultDiv.innerHTML = "";
+
+  if (!partNumber) {
+    // No part selected
+    return;
+  }
+
+  if (TM_PARTNUMBER_COLUMN === -1 || TM_OPERATOR_START === -1 || TM_OPERATOR_END === -1) {
+    resultDiv.textContent = "Configuration error: cannot evaluate operators for this part.";
+    return;
+  }
+
+  // 1) Find all rows that match the selected Part Number
+  const matchingRows = TM_ALL_ROWS.filter(row => {
+    const pn = (row[TM_PARTNUMBER_COLUMN] || "").trim();
+    return pn === partNumber;
+  });
+
+  if (!matchingRows.length) {
+    resultDiv.textContent = `No rows found for part ${partNumber}.`;
+    return;
+  }
+
+  // 2) For each operator, check if they have any non-empty status across those rows
+  const trainedOperators = [];
+
+  for (let i = TM_OPERATOR_START; i <= TM_OPERATOR_END; i++) {
+    const name = (TM_HEADERS[i] || "").trim();
+    if (!name) continue;
+
+    let hasStatus = false;
+    const statusSet = new Set();
+
+    matchingRows.forEach(row => {
+      const raw = (row[i] || "").trim();
+      if (raw && raw !== "#REF!") {
+        hasStatus = true;
+        statusSet.add(raw);
+      }
+    });
+
+    if (hasStatus) {
+      trainedOperators.push({
+        name,
+        statuses: Array.from(statusSet)
+      });
+    }
+  }
+
+  // 3) Render results
+  if (!trainedOperators.length) {
+    resultDiv.innerHTML = `
+      <div class="alert alert-warning mb-0">
+        No operators are trained on part <code>${partNumber}</code>.
+      </div>
+    `;
+    return;
+  }
+
+  let html = `
+    <h6 class="mb-2">
+      Operators trained / involved for part <code>${partNumber}</code>:
+    </h6>
+    <ul class="list-group">
+  `;
+
+  trainedOperators.forEach(op => {
+    const statusText = op.statuses.join(", ");
+    html += `
+      <li class="list-group-item d-flex justify-content-between align-items-center">
+        <span>${op.name}</span>
+        <span class="badge bg-success">${statusText}</span>
+      </li>
+    `;
+  });
+
+  html += `</ul>`;
+  resultDiv.innerHTML = html;
 }
 
 /**
