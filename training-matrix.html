@@ -56,8 +56,26 @@
       <label for="operatorSelect" class="form-label fw-semibold">Filter by Operator</label>
       <select id="operatorSelect" class="form-select">
         <option value="">All Operators</option>
-        <!-- Options will be injected from JS based on Eden → Nikki, NPI -->
+        <!-- Options injected from JS -->
       </select>
+    </div>
+  </div>
+
+  <!-- Part number selector -->
+  <div class="row mb-3">
+    <div class="col-12 col-md-6">
+      <label for="partSelect" class="form-label fw-semibold">Check Part Number</label>
+      <select id="partSelect" class="form-select">
+        <option value="">Select Part Number</option>
+        <!-- Options injected from JS -->
+      </select>
+    </div>
+  </div>
+
+  <!-- Part-number result: who is trained on that part -->
+  <div class="row mb-4">
+    <div class="col-12 col-md-8">
+      <div id="partResult"></div>
     </div>
   </div>
 
