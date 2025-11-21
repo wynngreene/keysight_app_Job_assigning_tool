@@ -2,282 +2,51 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Scan, Job, & Go + Training Matrix</title>
+  <title>Scan, Job, & Go! + Training Matrix</title>
 
-  <!-- Bootstrap 5 CSS -->
+  <!-- Bootstrap 5 CSS (optional, just for wrapper layout) -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 
-  <!-- PapaParse (for CSV parsing) -->
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
-
   <style>
-    body { background: #f4f4f4; }
-
-    /* Training Matrix Styles */
-    #matrixWrapper {
-      background: white;
+    body {
+      background: #f4f4f4;
+      padding: 20px;
+    }
+    .frame-container {
+      background: #ddd;
       padding: 10px;
-      border-radius: 4px;
-      box-shadow: 0 0 4px rgba(0,0,0,0.1);
-      overflow-x: auto;
-      overflow-y: auto;
-      max-height: 80vh;
+      border-radius: 6px;
+      margin-bottom: 20px;
     }
-    table.trainingTable {
-      border-collapse: collapse;
-      min-width: 600px;
-      font-size: 12px;
+    iframe {
+      width: 100%;
+      border: none;
+      background: transparent;
     }
-    table.trainingTable th,
-    table.trainingTable td {
-      border: 1px solid #ccc;
-      padding: 4px 6px;
-      white-space: nowrap;
+    /* Adjust heights as you like */
+    #cardsFrame {
+      height: 500px;  /* top 3 cards */
     }
-    table.trainingTable th {
-      background: #eee;
-      position: sticky;
-      top: 0;
-      z-index: 1;
+    #matrixFrame {
+      height: 600px;  /* training matrix */
     }
   </style>
 </head>
+<body>
 
-<body class="bg-light">
+  <div class="container-fluid">
+    <!-- Top: 3 cards -->
+    <div class="frame-container mb-4">
+      <iframe id="cardsFrame" src="cards.html"></iframe>
+    </div>
 
-  <!-- ===================== -->
-  <!--        TOP CARDS      -->
-  <!-- ===================== -->
-  <div class="container py-5">
-    <div class="row g-4">
-
-      <!-- CARD 1: Scan -->
-      <div class="col-12 col-md-4">
-        <div class="card shadow-sm h-100">
-          <div class="card-body">
-            <h5 class="card-title">Scan</h5>
-            <p class="card-text">Enter or scan Part Number.</p>
-
-            <div class="mb-3">
-              <label class="form-label" for="scanInput">Scan Input</label>
-              <input type="text" class="form-control" id="scanInput" placeholder="Scan or type here">
-            </div>
-
-            <button class="btn btn-primary w-100 mb-3" onclick="processScan()">Submit Scan</button>
-
-            <div id="scanResult" class="alert alert-secondary d-none"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- CARD 2: Pick Operator -->
-      <div class="col-12 col-md-4">
-        <div class="card shadow-sm h-100">
-          <div class="card-body">
-            <h5 class="card-title">Pick Operator</h5>
-            <p class="card-text">Select an operator to build and view their job list.</p>
-
-            <div class="mb-3">
-              <select class="form-select" id="employeeSelect">
-                <option value="">Select Employee</option>
-              </select>
-            </div>
-
-            <button class="btn btn-success w-100 mb-3" onclick="loadJobs()">Load Job List</button>
-
-            <div id="jobListContainer" class="d-none">
-              <h6 class="fw-bold">Current Jobs:</h6>
-              <ul id="jobList" class="list-group"></ul>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- CARD 3: Daily Log -->
-      <div class="col-12 col-md-4">
-        <div class="card shadow-sm h-100">
-          <div class="card-body d-flex flex-column">
-
-            <div class="d-flex justify-content-between align-items-center mb-2">
-              <h5 class="card-title mb-0">Daily Log</h5>
-              <small id="dailyLogDate" class="text-muted"></small>
-            </div>
-
-            <p class="card-text">View log entries for a specific day. Use arrows to change days.</p>
-
-            <div class="d-flex justify-content-between mb-3">
-              <button class="btn btn-outline-secondary btn-sm" onclick="changeLogDay(-1)">◀ Prev</button>
-              <button class="btn btn-outline-secondary btn-sm" onclick="changeLogDay(1)">Next ▶</button>
-            </div>
-
-            <div class="input-group mb-3">
-              <input type="text" id="logSearchInput" class="form-control" placeholder="Search today's log…">
-              <button class="btn btn-outline-primary" type="button" onclick="renderDailyLog()">Search</button>
-            </div>
-
-            <ul id="dailyLogList" class="list-group flex-grow-1 mb-0" style="overflow-y:auto; max-height:220px;"></ul>
-
-          </div>
-        </div>
-      </div>
-
+    <!-- Bottom: training matrix -->
+    <div class="frame-container">
+      <iframe id="matrixFrame" src="training-matrix.html"></iframe>
     </div>
   </div>
 
-  <!-- ===================== -->
-  <!--   TRAINING MATRIX     -->
-  <!-- ===================== -->
-  <div class="container mb-5">
-    <h2 class="fw-bold mb-3">Training Matrix</h2>
-    <div id="matrixWrapper">
-      <table id="trainingTable" class="trainingTable"></table>
-    </div>
-  </div>
-
-
-  <!-- ===================== -->
-  <!--        APP SCRIPT     -->
-  <!-- ===================== -->
-  <script>
-    // ========= EXISTING APP DATA =========
-    const DATA = {
-      employees: ["Leo Nardo", "Raph Ael", "Donny Tello", "Mikey Angelo"],
-      jobData: {
-        "Leo Nardo": ["JOB: LN8643248 | P/N: SWORD19-FG", "JOB: LN8643248 | P/N: KATANA1-TANA2", "JOB: LN8643248 | P/N: BLUE087-LD"],
-        "Raph Ael": ["JOB: LN8643248 | P/N: SAI20-FG", "JOB: LN8643248 | P/N: RED0706-MS"],
-        "Donny Tello": ["JOB: LN8643248 | P/N: STAFF21-FG", "JOB: LN8643248 | P/N: ROKUSHAKUBO-540", "JOB: LN8643248 | P/N: PURPLE94-BR"],
-        "Mikey Angelo": ["JOB: LN8643248 | P/N: NUNCHAKU22-FG", "JOB: LN8643248 | P/N: CHAIN75-FG", "JOB: LN8643248 | P/N: ORANGE2-PT"]
-      },
-      dailyLogs: {
-        "2025-11-18": ["07:30 — Leo scanned dishwasher rack", "08:15 — Raph picked parts for order #102", "09:00 — Donny logged completed install"],
-        "2025-11-19": ["06:45 — Leo checked inventory count", "07:20 — Raph replaced top rack wheel", "08:05 — Mikey logged control panel test"]
-      }
-    };
-
-    // ========= SCAN CARD =========
-    function processScan() {
-      const input = document.getElementById("scanInput").value.trim();
-      const box = document.getElementById("scanResult");
-      if (!input) {
-        box.classList.remove("d-none", "alert-secondary");
-        box.classList.add("alert-danger");
-        box.innerText = "Please enter a value to scan.";
-        return;
-      }
-      box.classList.remove("d-none", "alert-danger");
-      box.classList.add("alert-secondary");
-      box.innerText = "Scan Result: " + input;
-    }
-
-    // ========= PICK OPERATOR =========
-    function populateEmployees() {
-      const select = document.getElementById("employeeSelect");
-      while (select.options.length > 1) select.remove(1);
-      DATA.employees.forEach(name => {
-        let opt = document.createElement("option");
-        opt.value = opt.textContent = name;
-        select.appendChild(opt);
-      });
-    }
-
-    function loadJobs() {
-      const emp = document.getElementById("employeeSelect").value;
-      const container = document.getElementById("jobListContainer");
-      const list = document.getElementById("jobList");
-      list.innerHTML = "";
-
-      if (!emp) {
-        list.innerHTML = `<li class="list-group-item list-group-item-danger">Please select an employee.</li>`;
-        container.classList.remove("d-none");
-        return;
-      }
-      const jobs = DATA.jobData[emp] || [];
-      if (!jobs.length) {
-        list.innerHTML = `<li class="list-group-item">No jobs assigned today.</li>`;
-      } else {
-        jobs.forEach(j => {
-          const li = document.createElement("li");
-          li.className = "list-group-item";
-          li.textContent = j;
-          list.appendChild(li);
-        });
-      }
-      container.classList.remove("d-none");
-    }
-
-    // ========= DAILY LOG =========
-    let currentLogDate = new Date();
-    function formatDateKey(d) { return d.toISOString().slice(0,10); }
-    function formatDateDisplay(d) {
-      return d.toLocaleDateString(undefined, {year:"numeric", month:"short", day:"numeric"});
-    }
-
-    function changeLogDay(n) {
-      currentLogDate.setDate(currentLogDate.getDate() + n);
-      document.getElementById("logSearchInput").value = "";
-      renderDailyLog();
-    }
-
-    function renderDailyLog() {
-      const dateLabel = document.getElementById("dailyLogDate");
-      const list = document.getElementById("dailyLogList");
-      const search = document.getElementById("logSearchInput").value.toLowerCase();
-
-      const key = formatDateKey(currentLogDate);
-      const entries = DATA.dailyLogs[key] || [];
-
-      dateLabel.textContent = formatDateDisplay(currentLogDate);
-      list.innerHTML = "";
-
-      const filtered = search ? entries.filter(e => e.toLowerCase().includes(search)) : entries;
-
-      if (!filtered.length) {
-        list.innerHTML = `<li class="list-group-item text-muted">No log entries for this day.</li>`;
-        return;
-      }
-
-      filtered.forEach(e => {
-        const li = document.createElement("li");
-        li.className = "list-group-item";
-        li.textContent = e;
-        list.appendChild(li);
-      });
-    }
-
-    // ========= TRAINING MATRIX (CSV) =========
-    async function loadTrainingMatrix() {
-      try {
-        const response = await fetch("training_data.csv");
-        const csvText = await response.text();
-
-        const parsed = Papa.parse(csvText, { skipEmptyLines: true });
-        const rows = parsed.data;
-
-        const table = document.getElementById("trainingTable");
-
-        rows.forEach((row, rowIndex) => {
-          const tr = document.createElement("tr");
-          row.forEach(cell => {
-            const cellEl = document.createElement(rowIndex === 0 ? "th" : "td");
-            cellEl.textContent = cell;
-            tr.appendChild(cellEl);
-          });
-          table.appendChild(tr);
-        });
-
-      } catch (err) {
-        console.error("Error loading CSV:", err);
-      }
-    }
-
-    // ========= INIT =========
-    document.addEventListener("DOMContentLoaded", () => {
-      populateEmployees();
-      renderDailyLog();
-      loadTrainingMatrix();
-    });
-  </script>
-
+  <!-- Bootstrap JS bundle (optional) -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
