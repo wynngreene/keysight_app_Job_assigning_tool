@@ -1,52 +1,474 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
-  <title>Scan, Job, & Go! + Training Matrix</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Daily Operations — Scan + Training Lookup</title>
 
-  <!-- Bootstrap 5 CSS (optional, just for wrapper layout) -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-
-  <style>
-    body {
-      background: #f4f4f4;
-      padding: 20px;
-    }
-    .frame-container {
-      background: #ddd;
-      padding: 10px;
-      border-radius: 6px;
-      margin-bottom: 20px;
-    }
-    iframe {
-      width: 100%;
-      border: none;
-      background: transparent;
-    }
-    /* Adjust heights as you like */
-    #cardsFrame {
-      height: 500px;  /* top 3 cards */
-    }
-    #matrixFrame {
-      height: 600px;  /* training matrix */
-    }
-  </style>
+  <!-- Bootstrap 5 CSS -->
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    rel="stylesheet">
 </head>
-<body>
 
-  <div class="container-fluid">
-    <!-- Top: 3 cards -->
-    <div class="frame-container mb-4">
-      <iframe id="cardsFrame" src="cards.html"></iframe>
+<body class="bg-light">
+
+  <div class="container py-4">
+
+    <!-- HEADER -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h2 class="mb-0">Daily Operations</h2>
+      <!-- Future: link to full Training Matrix page here -->
+      <!-- <a href="training.html" class="btn btn-outline-secondary btn-sm">Training Matrix</a> -->
     </div>
 
-    <!-- Bottom: training matrix -->
-    <div class="frame-container">
-      <iframe id="matrixFrame" src="training-matrix.html"></iframe>
+    <!-- TRAINING CSV UPLOAD -->
+    <div class="card mb-4">
+      <div class="card-body">
+        <h5 class="card-title mb-2">Upload Training Sheet</h5>
+        <p class="card-text mb-2">
+          Upload the same training CSV you use for the matrix. The app will know who is trained on each part.
+        </p>
+
+        <div class="row g-3 align-items-center">
+          <div class="col-sm-6 col-md-5 col-lg-4">
+            <input
+              type="file"
+              id="csvInput"
+              accept=".csv"
+              class="form-control form-control-sm">
+          </div>
+          <div class="col-sm-6">
+            <small class="text-muted">
+              Uses your existing layout:<br>
+              Header row for operators, "Trained / Trainer 1 / Trainer 2" = can build.
+            </small>
+          </div>
+        </div>
+
+        <div id="loadStatus" class="mt-2 small text-muted"></div>
+      </div>
+    </div>
+
+    <!-- MAIN 3 CARDS -->
+    <div class="row g-4">
+
+      <!-- CARD 1: Scan Part -->
+      <div class="col-12 col-md-4">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <h5 class="card-title">1. Scan Part</h5>
+            <p class="card-text">
+              Enter or scan a <strong>Part Number</strong>. We'll look up who can build it.
+            </p>
+
+            <!-- Input field -->
+            <div class="mb-3">
+              <label class="form-label" for="scanInput">Scan Input</label>
+              <input
+                type="text"
+                class="form-control"
+                id="scanInput"
+                placeholder="Scan or type part number">
+            </div>
+
+            <!-- Button -->
+            <button class="btn btn-primary w-100 mb-3" onclick="processScan()">
+              Submit Scan
+            </button>
+
+            <!-- Result display -->
+            <div id="scanResult" class="alert alert-secondary d-none"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CARD 2: Trained Operators for Part -->
+      <div class="col-12 col-md-4">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <h5 class="card-title">2. Pick Operator</h5>
+            <p class="card-text">
+              After scanning, this dropdown shows <strong>who is trained</strong> on that part.
+            </p>
+
+            <!-- Operator dropdown -->
+            <div class="mb-2">
+              <select class="form-select" id="operatorSelect" disabled>
+                <option value="">Upload training + scan a part</option>
+              </select>
+            </div>
+
+            <small id="operatorInfo" class="text-muted d-block"></small>
+          </div>
+        </div>
+      </div>
+
+      <!-- CARD 3: Daily Log (simple viewer stub) -->
+      <div class="col-12 col-md-4">
+        <div class="card shadow-sm h-100">
+          <div class="card-body d-flex flex-column">
+
+            <!-- Header + Date -->
+            <div class="d-flex justify-content-between align-items-center mb-2">
+              <h5 class="card-title mb-0">3. Daily Log</h5>
+              <small id="dailyLogDate" class="text-muted"></small>
+            </div>
+
+            <p class="card-text">
+              View log entries for a specific day. (We can wire scans into this later.)
+            </p>
+
+            <!-- Day pagination -->
+            <div class="d-flex justify-content-between mb-3">
+              <button
+                class="btn btn-outline-secondary btn-sm"
+                onclick="changeLogDay(-1)">
+                ◀ Prev
+              </button>
+              <button
+                class="btn btn-outline-secondary btn-sm"
+                onclick="changeLogDay(1)">
+                Next ▶
+              </button>
+            </div>
+
+            <!-- Search within the day's log -->
+            <div class="input-group mb-3">
+              <input
+                type="text"
+                id="logSearchInput"
+                class="form-control"
+                placeholder="Search today's log…">
+              <button
+                class="btn btn-outline-primary"
+                type="button"
+                onclick="renderDailyLog()">
+                Search
+              </button>
+            </div>
+
+            <!-- Log list -->
+            <ul
+              id="dailyLogList"
+              class="list-group flex-grow-1 mb-0"
+              style="overflow-y: auto; max-height: 220px;">
+            </ul>
+
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 
-  <!-- Bootstrap JS bundle (optional) -->
+  <!-- Bootstrap JS -->
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+  <!-- PapaParse for CSV -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <!-- APP SCRIPT -->
+  <script>
+    // =========================
+    // GLOBAL TRAINING DATA
+    // =========================
+
+    // From your matrix logic, simplified:
+    // operators = [ { name, trainings: { [partNumber]: level } } ]
+    let operators = [];
+    let partsByNumber = {}; // optional, if you want part meta later
+
+    // ====== CSV CONFIG (MATCHES YOUR SHEET) ======
+    const HEADER_ROW_INDEX = 12;      // row 13 in Excel
+    const FIRST_DATA_ROW_INDEX = 13;  // first data row
+    const OPERATOR_COL_START = 16;    // "Eden" column
+    const OPERATOR_COL_END = 38;      // "Nikki, NPI" column
+
+    // ====== TRAINING LEVEL LOGIC (borrowed) ======
+    // "Trained", "Trainer 1", "Trainer 2" = trained.
+    function isLevelTrained(level) {
+      if (!level) return false;
+      const v = level.trim().toLowerCase();
+      return v === "trained" || v === "trainer 1" || v === "trainer 2";
+    }
+
+    // =========================
+    // DOM ELEMENTS
+    // =========================
+    const csvInput = document.getElementById("csvInput");
+    const loadStatus = document.getElementById("loadStatus");
+
+    const scanInput = document.getElementById("scanInput");
+    const scanResult = document.getElementById("scanResult");
+
+    const operatorSelect = document.getElementById("operatorSelect");
+    const operatorInfo = document.getElementById("operatorInfo");
+
+    const dailyLogDate = document.getElementById("dailyLogDate");
+    const dailyLogList = document.getElementById("dailyLogList");
+    const logSearchInput = document.getElementById("logSearchInput");
+
+    // =========================
+    // CSV LOAD & PARSE
+    // =========================
+
+    csvInput.addEventListener("change", () => {
+      const file = csvInput.files[0];
+      if (!file) return;
+
+      loadStatus.textContent = "Loading and parsing CSV...";
+      parseTrainingCsv(file);
+    });
+
+    function parseTrainingCsv(file) {
+      Papa.parse(file, {
+        header: false,
+        skipEmptyLines: true,
+        complete: (results) => {
+          try {
+            buildTrainingData(results.data);
+            loadStatus.textContent = "Training sheet loaded. Ready to scan parts.";
+          } catch (err) {
+            console.error(err);
+            loadStatus.textContent = "Error parsing CSV. Check console for details.";
+          }
+        }
+      });
+    }
+
+    function buildTrainingData(rows) {
+      operators = [];
+      partsByNumber = {};
+
+      const headerRow = rows[HEADER_ROW_INDEX];
+      if (!headerRow) {
+        throw new Error("Header row not found at index " + HEADER_ROW_INDEX);
+      }
+
+      // operator names from header row
+      const operatorNames = headerRow
+        .slice(OPERATOR_COL_START, OPERATOR_COL_END + 1)
+        .map(name => (name || "").toString().trim())
+        .filter(name => name !== "");
+
+      const operatorsMap = {}; // name -> { name, trainings: {} }
+
+      for (let r = FIRST_DATA_ROW_INDEX; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row) continue;
+
+        const partNumber = (row[2] || "").toString().trim(); // Col 2 = Part Number
+        if (!partNumber) continue;
+
+        // Optional: grab some part meta if you want later
+        const family = (row[1] || "").toString().trim();
+        const commonName = (row[3] || "").toString().trim();
+        const description = (row[4] || "").toString().trim();
+        const status = (row[7] || "").toString().trim();
+
+        if (!partsByNumber[partNumber]) {
+          partsByNumber[partNumber] = {
+            partNumber,
+            family,
+            commonName,
+            description,
+            status
+          };
+        }
+
+        operatorNames.forEach((opName, idx) => {
+          const colIndex = OPERATOR_COL_START + idx;
+          const cell = (row[colIndex] || "").toString().trim();
+          if (!cell) return;
+
+          if (!operatorsMap[opName]) {
+            operatorsMap[opName] = {
+              name: opName,
+              trainings: {}
+            };
+          }
+
+          operatorsMap[opName].trainings[partNumber] = cell;
+        });
+      }
+
+      operators = Object.values(operatorsMap);
+      console.log("Loaded operators:", operators);
+    }
+
+    // =========================
+    // SCAN → SHOW TRAINED OPERATORS
+    // =========================
+
+    function processScan() {
+      const partNumber = scanInput.value.trim();
+      if (!partNumber) {
+        showScanMessage("Please enter or scan a part number.", true);
+        resetOperatorDropdown("Scan a part first");
+        return;
+      }
+
+      if (operators.length === 0) {
+        showScanMessage("Upload a training CSV first.", true);
+        resetOperatorDropdown("Upload training sheet first");
+        return;
+      }
+
+      // Find all operators trained on this part
+      const trainedOperators = operators
+        .map(op => {
+          const level = op.trainings[partNumber];
+          if (!isLevelTrained(level)) return null;
+          return { name: op.name, level };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      if (trainedOperators.length === 0) {
+        showScanMessage(
+          `No trained operators found for part "${partNumber}".`,
+          true
+        );
+        resetOperatorDropdown("No trained operators for this part");
+        return;
+      }
+
+      // Success – update UI
+      showScanMessage(
+        `Found ${trainedOperators.length} trained operator(s) for part "${partNumber}".`,
+        false
+      );
+      populateOperatorDropdown(trainedOperators, partNumber);
+    }
+
+    function showScanMessage(message, isError) {
+      scanResult.classList.remove("d-none", "alert-secondary", "alert-danger");
+      scanResult.classList.add(isError ? "alert-danger" : "alert-secondary");
+      scanResult.textContent = message;
+    }
+
+    function resetOperatorDropdown(placeholderText) {
+      operatorSelect.innerHTML = "";
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = placeholderText || "Scan a part first";
+      operatorSelect.appendChild(opt);
+      operatorSelect.disabled = true;
+      operatorInfo.textContent = "";
+    }
+
+    function populateOperatorDropdown(trainedOperators, partNumber) {
+      operatorSelect.innerHTML = "";
+
+      const baseOpt = document.createElement("option");
+      baseOpt.value = "";
+      baseOpt.textContent = "Select operator";
+      operatorSelect.appendChild(baseOpt);
+
+      trainedOperators.forEach(op => {
+        const opt = document.createElement("option");
+        opt.value = op.name;
+        opt.textContent = `${op.name} (${op.level})`;
+        operatorSelect.appendChild(opt);
+      });
+
+      operatorSelect.disabled = false;
+
+      operatorInfo.textContent =
+        `Operators shown are trained on part "${partNumber}".`;
+    }
+
+    // Allow Enter key to trigger scan
+    scanInput.addEventListener("keyup", (e) => {
+      if (e.key === "Enter") {
+        processScan();
+      }
+    });
+
+    // =========================
+    // SIMPLE DAILY LOG VIEWER
+    // (stub for now; can wire scans into this later)
+    // =========================
+
+    const DATA = {
+      dailyLogs: {
+        // Example seed data:
+        "2025-11-18": [
+          "07:30 — John scanned dishwasher rack",
+          "08:15 — Sarah picked parts for order #102",
+          "09:00 — David logged completed install"
+        ],
+        "2025-11-19": [
+          "06:45 — John checked inventory count",
+          "07:20 — Sarah replaced top rack wheel",
+          "08:05 — David logged control panel test"
+        ]
+      }
+    };
+
+    let currentLogDate = new Date();
+
+    function formatDateKey(date) {
+      return date.toISOString().slice(0, 10);
+    }
+
+    function formatDateDisplay(date) {
+      return date.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric"
+      });
+    }
+
+    function changeLogDay(offsetDays) {
+      currentLogDate.setDate(currentLogDate.getDate() + offsetDays);
+      if (logSearchInput) logSearchInput.value = "";
+      renderDailyLog();
+    }
+
+    function renderDailyLog() {
+      if (!dailyLogDate || !dailyLogList) return;
+
+      const dateKey = formatDateKey(currentLogDate);
+      const allEntries = DATA.dailyLogs[dateKey] || [];
+      const searchTerm = (logSearchInput?.value || "").trim().toLowerCase();
+
+      dailyLogDate.textContent = formatDateDisplay(currentLogDate);
+      dailyLogList.innerHTML = "";
+
+      const entries = searchTerm
+        ? allEntries.filter(e => e.toLowerCase().includes(searchTerm))
+        : allEntries;
+
+      if (entries.length === 0) {
+        dailyLogList.innerHTML = `
+          <li class="list-group-item text-muted">
+            No log entries for this day.
+          </li>
+        `;
+        return;
+      }
+
+      entries.forEach(entry => {
+        const li = document.createElement("li");
+        li.className = "list-group-item";
+        li.textContent = entry;
+        dailyLogList.appendChild(li);
+      });
+    }
+
+    // =========================
+    // INIT
+    // =========================
+
+    document.addEventListener("DOMContentLoaded", () => {
+      resetOperatorDropdown("Upload training + scan a part");
+      renderDailyLog();
+    });
+  </script>
+
 </body>
+
 </html>
