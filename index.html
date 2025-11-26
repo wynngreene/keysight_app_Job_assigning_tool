@@ -19,8 +19,6 @@
     <!-- HEADER -->
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h2 class="mb-0">Daily Operations</h2>
-      <!-- Future: link to full Training Matrix page here -->
-      <!-- <a href="training.html" class="btn btn-outline-secondary btn-sm">Training Matrix</a> -->
     </div>
 
     <!-- TRAINING CSV UPLOAD -->
@@ -28,7 +26,7 @@
       <div class="card-body">
         <h5 class="card-title mb-2">Upload Training Sheet</h5>
         <p class="card-text mb-2">
-          Upload the same training CSV you use for the matrix. The app will know who is trained on each part.
+          Upload the training CSV so the app knows which operators are trained on each part.
         </p>
 
         <div class="row g-3 align-items-center">
@@ -84,28 +82,49 @@
         </div>
       </div>
 
-      <!-- CARD 2: Trained Operators for Part -->
+      <!-- CARD 2: Trained Operators for Part + Assign Job -->
       <div class="col-12 col-md-4">
         <div class="card shadow-sm h-100">
-          <div class="card-body">
-            <h5 class="card-title">2. Pick Operator</h5>
+          <div class="card-body d-flex flex-column">
+            <h5 class="card-title">2. Pick Operator & Assign Job</h5>
             <p class="card-text">
               After scanning, this dropdown shows <strong>who is trained</strong> on that part.
+              Then assign a job number to that operator.
             </p>
 
             <!-- Operator dropdown -->
             <div class="mb-2">
+              <label class="form-label" for="operatorSelect">Trained Operators</label>
               <select class="form-select" id="operatorSelect" disabled>
                 <option value="">Upload training + scan a part</option>
               </select>
             </div>
 
-            <small id="operatorInfo" class="text-muted d-block"></small>
+            <!-- Job number input -->
+            <div class="mb-2">
+              <label class="form-label" for="jobNumberInput">Job Number</label>
+              <input
+                type="text"
+                class="form-control"
+                id="jobNumberInput"
+                placeholder="Enter job number">
+            </div>
+
+            <!-- Assign button -->
+            <button
+              class="btn btn-success w-100 mb-2"
+              id="assignJobBtn"
+              onclick="assignJob()"
+              disabled>
+              Assign Job
+            </button>
+
+            <small id="operatorInfo" class="text-muted d-block mt-auto"></small>
           </div>
         </div>
       </div>
 
-      <!-- CARD 3: Daily Log (simple viewer stub) -->
+      <!-- CARD 3: Daily Log -->
       <div class="col-12 col-md-4">
         <div class="card shadow-sm h-100">
           <div class="card-body d-flex flex-column">
@@ -117,7 +136,7 @@
             </div>
 
             <p class="card-text">
-              View log entries for a specific day. (We can wire scans into this later.)
+              View log entries for a specific day. Assignments will show up here.
             </p>
 
             <!-- Day pagination -->
@@ -161,6 +180,37 @@
       </div>
 
     </div>
+
+    <!-- JOB ASSIGNMENTS LIST -->
+    <div class="mt-4">
+      <div class="card">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <h5 class="card-title mb-0">Job Assignments</h5>
+            <small class="text-muted">Showing jobs in pages of 10</small>
+          </div>
+
+          <div class="table-responsive">
+            <table class="table table-sm table-striped mb-2">
+              <thead class="table-light">
+                <tr>
+                  <th scope="col">Job #</th>
+                  <th scope="col">Part #</th>
+                  <th scope="col">Operator</th>
+                  <th scope="col">Time Assigned</th>
+                </tr>
+              </thead>
+              <tbody id="assignmentTableBody">
+                <!-- Filled by JS -->
+              </tbody>
+            </table>
+          </div>
+
+          <div id="assignmentPagination" class="mt-2"></div>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <!-- Bootstrap JS -->
@@ -172,13 +222,21 @@
   <!-- APP SCRIPT -->
   <script>
     // =========================
-    // GLOBAL TRAINING DATA
+    // GLOBAL TRAINING & JOB DATA
     // =========================
 
-    // From your matrix logic, simplified:
     // operators = [ { name, trainings: { [partNumber]: level } } ]
     let operators = [];
-    let partsByNumber = {}; // optional, if you want part meta later
+    let partsByNumber = {}; // optional meta
+    let lastScannedPartNumber = null;
+
+    // job assignments
+    // { jobNumber, partNumber, operator, assignedAt }
+    let assignments = [];
+
+    // pagination for assignments
+    const ASSIGNMENTS_PAGE_SIZE = 10;
+    let currentAssignmentPage = 1;
 
     // ====== CSV CONFIG (MATCHES YOUR SHEET) ======
     const HEADER_ROW_INDEX = 12;      // row 13 in Excel
@@ -186,8 +244,7 @@
     const OPERATOR_COL_START = 16;    // "Eden" column
     const OPERATOR_COL_END = 38;      // "Nikki, NPI" column
 
-    // ====== TRAINING LEVEL LOGIC (borrowed) ======
-    // "Trained", "Trainer 1", "Trainer 2" = trained.
+    // ====== TRAINING LEVEL LOGIC ======
     function isLevelTrained(level) {
       if (!level) return false;
       const v = level.trim().toLowerCase();
@@ -204,11 +261,16 @@
     const scanResult = document.getElementById("scanResult");
 
     const operatorSelect = document.getElementById("operatorSelect");
+    const jobNumberInput = document.getElementById("jobNumberInput");
+    const assignJobBtn = document.getElementById("assignJobBtn");
     const operatorInfo = document.getElementById("operatorInfo");
 
     const dailyLogDate = document.getElementById("dailyLogDate");
     const dailyLogList = document.getElementById("dailyLogList");
     const logSearchInput = document.getElementById("logSearchInput");
+
+    const assignmentTableBody = document.getElementById("assignmentTableBody");
+    const assignmentPagination = document.getElementById("assignmentPagination");
 
     // =========================
     // CSV LOAD & PARSE
@@ -262,7 +324,7 @@
         const partNumber = (row[2] || "").toString().trim(); // Col 2 = Part Number
         if (!partNumber) continue;
 
-        // Optional: grab some part meta if you want later
+        // Optional meta
         const family = (row[1] || "").toString().trim();
         const commonName = (row[3] || "").toString().trim();
         const description = (row[4] || "").toString().trim();
@@ -307,12 +369,16 @@
       if (!partNumber) {
         showScanMessage("Please enter or scan a part number.", true);
         resetOperatorDropdown("Scan a part first");
+        lastScannedPartNumber = null;
+        updateAssignButtonState();
         return;
       }
 
       if (operators.length === 0) {
         showScanMessage("Upload a training CSV first.", true);
         resetOperatorDropdown("Upload training sheet first");
+        lastScannedPartNumber = null;
+        updateAssignButtonState();
         return;
       }
 
@@ -332,15 +398,19 @@
           true
         );
         resetOperatorDropdown("No trained operators for this part");
+        lastScannedPartNumber = partNumber; // still remember the part
+        updateAssignButtonState();
         return;
       }
 
       // Success – update UI
+      lastScannedPartNumber = partNumber;
       showScanMessage(
         `Found ${trainedOperators.length} trained operator(s) for part "${partNumber}".`,
         false
       );
       populateOperatorDropdown(trainedOperators, partNumber);
+      updateAssignButtonState();
     }
 
     function showScanMessage(message, isError) {
@@ -388,8 +458,177 @@
     });
 
     // =========================
+    // ASSIGN JOB LOGIC
+    // =========================
+
+    function updateAssignButtonState() {
+      const operator = operatorSelect.value;
+      const jobNumber = jobNumberInput.value.trim();
+      const hasPart = !!lastScannedPartNumber;
+
+      // Enable only if: part scanned, operator selected, job number entered
+      assignJobBtn.disabled = !(hasPart && operator && jobNumber);
+    }
+
+    operatorSelect.addEventListener("change", updateAssignButtonState);
+    jobNumberInput.addEventListener("keyup", updateAssignButtonState);
+    jobNumberInput.addEventListener("change", updateAssignButtonState);
+
+    function assignJob() {
+      const operator = operatorSelect.value;
+      const jobNumber = jobNumberInput.value.trim();
+      const partNumber = lastScannedPartNumber;
+
+      if (!partNumber) {
+        operatorInfo.textContent = "Scan a part before assigning a job.";
+        return;
+      }
+      if (!operator) {
+        operatorInfo.textContent = "Select an operator before assigning a job.";
+        return;
+      }
+      if (!jobNumber) {
+        operatorInfo.textContent = "Enter a job number before assigning.";
+        return;
+      }
+
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const assignedAt = now.toISOString();
+
+      const assignment = {
+        jobNumber,
+        partNumber,
+        operator,
+        assignedAt
+      };
+
+      assignments.push(assignment);
+      console.log("New assignment:", assignment);
+
+      // Log into today's daily log
+      const dateKey = formatDateKey(currentLogDate);
+      if (!DATA.dailyLogs[dateKey]) {
+        DATA.dailyLogs[dateKey] = [];
+      }
+
+      DATA.dailyLogs[dateKey].push(
+        `${timeStr} — Assigned job ${jobNumber} (part ${partNumber}) to ${operator}`
+      );
+      renderDailyLog();
+
+      // Refresh assignment list view
+      renderAssignments(currentAssignmentPage);
+
+      // Feedback
+      operatorInfo.textContent =
+        `Assigned job ${jobNumber} (part ${partNumber}) to ${operator}.`;
+
+      // Clear job number for next assignment
+      jobNumberInput.value = "";
+      updateAssignButtonState();
+    }
+
+    // =========================
+    // JOB ASSIGNMENTS TABLE + PAGINATION
+    // =========================
+
+    function renderAssignments(page = 1) {
+      if (!assignmentTableBody || !assignmentPagination) return;
+
+      assignmentTableBody.innerHTML = "";
+      assignmentPagination.innerHTML = "";
+
+      const total = assignments.length;
+
+      if (total === 0) {
+        assignmentTableBody.innerHTML = `
+          <tr>
+            <td colspan="4" class="text-muted">
+              No jobs assigned yet.
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      const totalPages = Math.ceil(total / ASSIGNMENTS_PAGE_SIZE);
+      const safePage = Math.min(Math.max(page, 1), totalPages);
+      currentAssignmentPage = safePage;
+
+      const startIndex = (safePage - 1) * ASSIGNMENTS_PAGE_SIZE;
+      const endIndex = Math.min(startIndex + ASSIGNMENTS_PAGE_SIZE, total);
+      const pageItems = assignments.slice(startIndex, endIndex);
+
+      pageItems.forEach(a => {
+        const dt = new Date(a.assignedAt);
+        const timeStr = dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        const dateStr = dt.toLocaleDateString();
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${a.jobNumber}</td>
+          <td>${a.partNumber}</td>
+          <td>${a.operator}</td>
+          <td>${dateStr} ${timeStr}</td>
+        `;
+        assignmentTableBody.appendChild(tr);
+      });
+
+      // Build pagination controls
+      const row = document.createElement("div");
+      row.className = "d-flex justify-content-between align-items-center";
+
+      const infoSpan = document.createElement("span");
+      infoSpan.className = "small text-muted";
+      infoSpan.textContent =
+        `Showing ${startIndex + 1}-${endIndex} of ${total} job(s)`;
+      row.appendChild(infoSpan);
+
+      const navDiv = document.createElement("div");
+      const ul = document.createElement("ul");
+      ul.className = "pagination pagination-sm mb-0";
+
+      function addPage(label, targetPage, disabled = false, active = false) {
+        const li = document.createElement("li");
+        li.className = "page-item";
+        if (disabled) li.classList.add("disabled");
+        if (active) li.classList.add("active");
+
+        const a = document.createElement("a");
+        a.className = "page-link";
+        a.href = "#";
+        a.textContent = label;
+
+        if (!disabled && !active) {
+          a.addEventListener("click", (e) => {
+            e.preventDefault();
+            renderAssignments(targetPage);
+          });
+        }
+
+        li.appendChild(a);
+        ul.appendChild(li);
+      }
+
+      // Prev
+      addPage("«", safePage - 1, safePage === 1, false);
+
+      // Page numbers
+      for (let p = 1; p <= totalPages; p++) {
+        addPage(String(p), p, false, p === safePage);
+      }
+
+      // Next
+      addPage("»", safePage + 1, safePage === totalPages, false);
+
+      navDiv.appendChild(ul);
+      row.appendChild(navDiv);
+
+      assignmentPagination.appendChild(row);
+    }
+
+    // =========================
     // SIMPLE DAILY LOG VIEWER
-    // (stub for now; can wire scans into this later)
     // =========================
 
     const DATA = {
@@ -466,6 +705,8 @@
     document.addEventListener("DOMContentLoaded", () => {
       resetOperatorDropdown("Upload training + scan a part");
       renderDailyLog();
+      renderAssignments(); // show "no jobs assigned" initially
+      updateAssignButtonState();
     });
   </script>
 
