@@ -75,6 +75,7 @@ const completedJobsPagination = document.getElementById("completedJobsPagination
 const operatorsSummaryBody = document.getElementById("operatorsSummaryBody");
 
 // Tabs
+const mainTabBtn = document.getElementById("mainTab");
 const tickTabBtn = document.getElementById("tickTab");
 const operatorsTabBtn = document.getElementById("operatorsTab");
 
@@ -88,7 +89,7 @@ const editInitialsInput = document.getElementById("editInitialsInput");
 const editErrorMsg = document.getElementById("editErrorMsg");
 
 // =========================
-// CSV LOAD & PARSE
+– CSV LOAD & PARSE
 // =========================
 
 csvInput.addEventListener("change", () => {
@@ -174,7 +175,7 @@ function buildTrainingData(rows) {
   operators = Object.values(operatorsMap);
   console.log("Loaded operators:", operators);
 
-  // Update operator summary if that tab is open
+  // Update operator summary in case that tab is open
   renderOperatorSummary();
 }
 
@@ -183,25 +184,32 @@ function buildTrainingData(rows) {
 // =========================
 
 function showPage(page) {
+  const mainPage = document.getElementById("mainPage");
   const tickPage = document.getElementById("tickPage");
   const operatorsPage = document.getElementById("operatorsPage");
-  if (!tickPage || !operatorsPage) return;
+  if (!mainPage || !tickPage || !operatorsPage) return;
 
-  if (page === "operators") {
-    tickPage.classList.add("d-none");
+  // Hide all
+  mainPage.classList.add("d-none");
+  tickPage.classList.add("d-none");
+  operatorsPage.classList.add("d-none");
+
+  mainTabBtn.classList.remove("active");
+  tickTabBtn.classList.remove("active");
+  operatorsTabBtn.classList.remove("active");
+
+  if (page === "tick") {
+    tickPage.classList.remove("d-none");
+    tickTabBtn.classList.add("active");
+    renderAssignments();
+  } else if (page === "operators") {
     operatorsPage.classList.remove("d-none");
-
-    if (tickTabBtn) tickTabBtn.classList.remove("active");
-    if (operatorsTabBtn) operatorsTabBtn.classList.add("active");
-
+    operatorsTabBtn.classList.add("active");
     renderOperatorSummary();
   } else {
-    // default to tick
-    tickPage.classList.remove("d-none");
-    operatorsPage.classList.add("d-none");
-
-    if (tickTabBtn) tickTabBtn.classList.add("active");
-    if (operatorsTabBtn) operatorsTabBtn.classList.remove("active");
+    // default to main
+    mainPage.classList.remove("d-none");
+    mainTabBtn.classList.add("active");
   }
 }
 
@@ -370,7 +378,7 @@ function assignJob() {
 }
 
 // =========================
-// JOB ASSIGNMENTS TABLES
+// JOB ASSIGNMENTS TABLES (TICK PAGE)
 // =========================
 
 function renderAssignments() {
@@ -830,11 +838,14 @@ function renderDailyLog() {
 document.addEventListener("DOMContentLoaded", () => {
   resetOperatorDropdown("Upload training + scan a part");
   renderDailyLog();
-  renderAssignments(); // show empty states initially
-  renderOperatorSummary();
+  renderAssignments();       // show empty states initially
+  renderOperatorSummary();   // show empty operator summary
   updateAssignButtonState();
 
   editAssignmentModal = new bootstrap.Modal(
     document.getElementById("editAssignmentModal")
   );
+
+  // Ensure Main tab/page is visible on load
+  showPage("main");
 });
