@@ -136,7 +136,7 @@
             </div>
 
             <p class="card-text">
-              View log entries for a specific day. Assignments will show up here.
+              View log entries for a specific day. Assignments and edits will show up here.
             </p>
 
             <!-- Day pagination -->
@@ -197,7 +197,9 @@
                   <th scope="col">Job #</th>
                   <th scope="col">Part #</th>
                   <th scope="col">Operator</th>
+                  <th scope="col">Status</th>
                   <th scope="col">Time Assigned</th>
+                  <th scope="col">Actions</th>
                 </tr>
               </thead>
               <tbody id="assignmentTableBody">
@@ -211,6 +213,84 @@
       </div>
     </div>
 
+  </div>
+
+  <!-- EDIT ASSIGNMENT MODAL -->
+  <div
+    class="modal fade"
+    id="editAssignmentModal"
+    tabindex="-1"
+    aria-labelledby="editAssignmentModalLabel"
+    aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="editAssignmentModalLabel">Edit Job Assignment</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="editAssignmentIndex">
+
+          <div class="mb-2">
+            <label class="form-label">Job Number</label>
+            <input type="text" class="form-control" id="editJobNumber" disabled>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label">Part Number</label>
+            <input type="text" class="form-control" id="editPartNumber" disabled>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label" for="editOperatorSelect">Operator</label>
+            <select class="form-select" id="editOperatorSelect">
+              <!-- Filled dynamically -->
+            </select>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label" for="editStatusSelect">Status</label>
+            <select class="form-select" id="editStatusSelect">
+              <option value="Assigned">Assigned</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Completed">Completed</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+
+          <div class="mb-2">
+            <label class="form-label" for="editInitialsInput">Your initials (required)</label>
+            <input
+              type="text"
+              class="form-control"
+              id="editInitialsInput"
+              placeholder="e.g. WG">
+          </div>
+
+          <div id="editErrorMsg" class="text-danger small"></div>
+        </div>
+        <div class="modal-footer">
+          <button
+            type="button"
+            class="btn btn-outline-danger me-auto"
+            onclick="deleteAssignment()">
+            Delete Job
+          </button>
+          <button
+            type="button"
+            class="btn btn-secondary"
+            data-bs-dismiss="modal">
+            Cancel
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            onclick="saveAssignmentChanges()">
+            Save Changes
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Bootstrap JS -->
@@ -231,12 +311,15 @@
     let lastScannedPartNumber = null;
 
     // job assignments
-    // { jobNumber, partNumber, operator, assignedAt }
+    // { jobNumber, partNumber, operator, status, assignedAt }
     let assignments = [];
 
     // pagination for assignments
     const ASSIGNMENTS_PAGE_SIZE = 10;
     let currentAssignmentPage = 1;
+
+    // modal instance
+    let editAssignmentModal = null;
 
     // ====== CSV CONFIG (MATCHES YOUR SHEET) ======
     const HEADER_ROW_INDEX = 12;      // row 13 in Excel
@@ -249,6 +332,21 @@
       if (!level) return false;
       const v = level.trim().toLowerCase();
       return v === "trained" || v === "trainer 1" || v === "trainer 2";
+    }
+
+    // Shared helper: get trained operators for a part
+    function getTrainedOperatorsForPart(partNumber) {
+      const pn = (partNumber || "").trim();
+      if (!pn) return [];
+
+      return operators
+        .map(op => {
+          const level = op.trainings[pn];
+          if (!isLevelTrained(level)) return null;
+          return { name: op.name, level };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.name.localeCompare(b.name));
     }
 
     // =========================
@@ -271,6 +369,15 @@
 
     const assignmentTableBody = document.getElementById("assignmentTableBody");
     const assignmentPagination = document.getElementById("assignmentPagination");
+
+    // Edit modal elements
+    const editAssignmentIndexInput = document.getElementById("editAssignmentIndex");
+    const editJobNumberInput = document.getElementById("editJobNumber");
+    const editPartNumberInput = document.getElementById("editPartNumber");
+    const editOperatorSelect = document.getElementById("editOperatorSelect");
+    const editStatusSelect = document.getElementById("editStatusSelect");
+    const editInitialsInput = document.getElementById("editInitialsInput");
+    const editErrorMsg = document.getElementById("editErrorMsg");
 
     // =========================
     // CSV LOAD & PARSE
@@ -382,15 +489,8 @@
         return;
       }
 
-      // Find all operators trained on this part
-      const trainedOperators = operators
-        .map(op => {
-          const level = op.trainings[partNumber];
-          if (!isLevelTrained(level)) return null;
-          return { name: op.name, level };
-        })
-        .filter(Boolean)
-        .sort((a, b) => a.name.localeCompare(b.name));
+      // Use shared helper
+      const trainedOperators = getTrainedOperatorsForPart(partNumber);
 
       if (trainedOperators.length === 0) {
         showScanMessage(
@@ -500,6 +600,7 @@
         jobNumber,
         partNumber,
         operator,
+        status: "Assigned",
         assignedAt
       };
 
@@ -544,7 +645,7 @@
       if (total === 0) {
         assignmentTableBody.innerHTML = `
           <tr>
-            <td colspan="4" class="text-muted">
+            <td colspan="6" class="text-muted">
               No jobs assigned yet.
             </td>
           </tr>
@@ -560,7 +661,8 @@
       const endIndex = Math.min(startIndex + ASSIGNMENTS_PAGE_SIZE, total);
       const pageItems = assignments.slice(startIndex, endIndex);
 
-      pageItems.forEach(a => {
+      pageItems.forEach((a, idxOnPage) => {
+        const globalIndex = startIndex + idxOnPage;
         const dt = new Date(a.assignedAt);
         const timeStr = dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
         const dateStr = dt.toLocaleDateString();
@@ -569,7 +671,15 @@
           <td>${a.jobNumber}</td>
           <td>${a.partNumber}</td>
           <td>${a.operator}</td>
+          <td>${a.status}</td>
           <td>${dateStr} ${timeStr}</td>
+          <td>
+            <button
+              class="btn btn-sm btn-outline-primary"
+              onclick="openEditAssignment(${globalIndex})">
+              Edit
+            </button>
+          </td>
         `;
         assignmentTableBody.appendChild(tr);
       });
@@ -625,6 +735,160 @@
       row.appendChild(navDiv);
 
       assignmentPagination.appendChild(row);
+    }
+
+    // =========================
+    // EDIT ASSIGNMENT MODAL LOGIC
+    // =========================
+
+    function openEditAssignment(index) {
+      const assignment = assignments[index];
+      if (!assignment) return;
+
+      editAssignmentIndexInput.value = index;
+      editJobNumberInput.value = assignment.jobNumber;
+      editPartNumberInput.value = assignment.partNumber;
+
+      // Get operators trained on THIS part
+      const trainedOperators = getTrainedOperatorsForPart(assignment.partNumber);
+
+      editOperatorSelect.innerHTML = "";
+      const baseOpt = document.createElement("option");
+      baseOpt.value = "";
+      baseOpt.textContent = "(Select operator)";
+      editOperatorSelect.appendChild(baseOpt);
+
+      if (trainedOperators.length > 0) {
+        // Show only trained operators for this part
+        trainedOperators.forEach(op => {
+          const opt = document.createElement("option");
+          opt.value = op.name;
+          opt.textContent = `${op.name} (${op.level})`;
+          editOperatorSelect.appendChild(opt);
+        });
+
+        // Ensure current operator is selectable even if not in trained list
+        const isCurrentInList = trainedOperators.some(op => op.name === assignment.operator);
+        if (!isCurrentInList && assignment.operator) {
+          const opt = document.createElement("option");
+          opt.value = assignment.operator;
+          opt.textContent = `${assignment.operator} (not in trained list)`;
+          editOperatorSelect.appendChild(opt);
+        }
+      } else {
+        // Fallback: no trained operators found for this part
+        const opt = document.createElement("option");
+        opt.value = assignment.operator;
+        opt.textContent = `${assignment.operator} (no trained list for this part)`;
+        editOperatorSelect.appendChild(opt);
+      }
+
+      editOperatorSelect.value = assignment.operator;
+      editStatusSelect.value = assignment.status || "Assigned";
+      editInitialsInput.value = "";
+      editErrorMsg.textContent = "";
+
+      if (!editAssignmentModal) {
+        editAssignmentModal = new bootstrap.Modal(
+          document.getElementById("editAssignmentModal")
+        );
+      }
+      editAssignmentModal.show();
+    }
+
+    function saveAssignmentChanges() {
+      const index = parseInt(editAssignmentIndexInput.value, 10);
+      const assignment = assignments[index];
+      if (!assignment) return;
+
+      const initials = editInitialsInput.value.trim();
+      if (!initials) {
+        editErrorMsg.textContent = "Initials are required to save changes.";
+        return;
+      }
+
+      const newOperator = editOperatorSelect.value || assignment.operator;
+      const newStatus = editStatusSelect.value || assignment.status;
+
+      const oldOperator = assignment.operator;
+      const oldStatus = assignment.status;
+
+      // If no changes, just close.
+      if (newOperator === oldOperator && newStatus === oldStatus) {
+        editErrorMsg.textContent = "";
+        if (editAssignmentModal) editAssignmentModal.hide();
+        return;
+      }
+
+      assignment.operator = newOperator;
+      assignment.status = newStatus;
+
+      // Log change to daily log
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const dateKey = formatDateKey(currentLogDate);
+      if (!DATA.dailyLogs[dateKey]) {
+        DATA.dailyLogs[dateKey] = [];
+      }
+
+      const changes = [];
+      if (oldOperator !== newOperator) {
+        changes.push(`operator ${oldOperator} → ${newOperator}`);
+      }
+      if (oldStatus !== newStatus) {
+        changes.push(`status ${oldStatus} → ${newStatus}`);
+      }
+
+      const changeSummary = changes.join(", ");
+
+      DATA.dailyLogs[dateKey].push(
+        `${timeStr} — [${initials}] updated job ${assignment.jobNumber} (${assignment.partNumber}): ${changeSummary}`
+      );
+
+      renderDailyLog();
+      renderAssignments(currentAssignmentPage);
+
+      editErrorMsg.textContent = "";
+      if (editAssignmentModal) editAssignmentModal.hide();
+    }
+
+    function deleteAssignment() {
+      const index = parseInt(editAssignmentIndexInput.value, 10);
+      const assignment = assignments[index];
+      if (!assignment) return;
+
+      const initials = editInitialsInput.value.trim();
+      if (!initials) {
+        editErrorMsg.textContent = "Initials are required to delete a job.";
+        return;
+      }
+
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const dateKey = formatDateKey(currentLogDate);
+      if (!DATA.dailyLogs[dateKey]) {
+        DATA.dailyLogs[dateKey] = [];
+      }
+
+      DATA.dailyLogs[dateKey].push(
+        `${timeStr} — [${initials}] deleted job ${assignment.jobNumber} (part ${assignment.partNumber}) previously assigned to ${assignment.operator} [status: ${assignment.status}]`
+      );
+
+      // Remove assignment
+      assignments.splice(index, 1);
+
+      // Adjust page if needed
+      const total = assignments.length;
+      const totalPages = Math.max(1, Math.ceil(total / ASSIGNMENTS_PAGE_SIZE));
+      if (currentAssignmentPage > totalPages) {
+        currentAssignmentPage = totalPages;
+      }
+
+      renderDailyLog();
+      renderAssignments(currentAssignmentPage);
+
+      editErrorMsg.textContent = "";
+      if (editAssignmentModal) editAssignmentModal.hide();
     }
 
     // =========================
@@ -707,6 +971,10 @@
       renderDailyLog();
       renderAssignments(); // show "no jobs assigned" initially
       updateAssignButtonState();
+
+      editAssignmentModal = new bootstrap.Modal(
+        document.getElementById("editAssignmentModal")
+      );
     });
   </script>
 
