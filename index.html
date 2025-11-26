@@ -10,6 +10,9 @@
   <link
     href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
     rel="stylesheet">
+
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="app.css">
 </head>
 
 <body class="bg-light">
@@ -171,8 +174,7 @@
             <!-- Log list -->
             <ul
               id="dailyLogList"
-              class="list-group flex-grow-1 mb-0"
-              style="overflow-y: auto; max-height: 220px;">
+              class="list-group flex-grow-1 mb-0 log-list">
             </ul>
 
           </div>
@@ -181,36 +183,61 @@
 
     </div>
 
-    <!-- JOB ASSIGNMENTS LIST -->
+    <!-- JOB ASSIGNMENTS LIST (SEPARATED) -->
     <div class="mt-4">
-      <div class="card">
-        <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <h5 class="card-title mb-0">Job Assignments</h5>
-            <small class="text-muted">Showing jobs in pages of 10</small>
-          </div>
 
-          <div class="table-responsive">
-            <table class="table table-sm table-striped mb-2">
+      <!-- ACTIVE JOBS: Assigned + In Progress -->
+      <div class="card mb-4">
+        <div class="card-body">
+          <h5 class="card-title mb-2">Active Jobs</h5>
+          <small class="text-muted">Assigned & In Progress</small>
+
+          <div class="table-responsive mt-2">
+            <table class="table table-sm table-striped">
               <thead class="table-light">
                 <tr>
-                  <th scope="col">Job #</th>
-                  <th scope="col">Part #</th>
-                  <th scope="col">Operator</th>
-                  <th scope="col">Status</th>
-                  <th scope="col">Time Assigned</th>
-                  <th scope="col">Actions</th>
+                  <th>Job #</th>
+                  <th>Part #</th>
+                  <th>Operator</th>
+                  <th>Status</th>
+                  <th>Time Assigned</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
-              <tbody id="assignmentTableBody">
-                <!-- Filled by JS -->
-              </tbody>
+              <tbody id="activeJobsBody"></tbody>
             </table>
           </div>
 
-          <div id="assignmentPagination" class="mt-2"></div>
+          <div id="activeJobsPagination" class="mt-2"></div>
         </div>
       </div>
+
+      <!-- COMPLETED JOBS -->
+      <div class="card">
+        <div class="card-body">
+          <h5 class="card-title mb-2">Completed Jobs</h5>
+          <small class="text-muted">Completed / Cancelled</small>
+
+          <div class="table-responsive mt-2">
+            <table class="table table-sm table-striped">
+              <thead class="table-light">
+                <tr>
+                  <th>Job #</th>
+                  <th>Part #</th>
+                  <th>Operator</th>
+                  <th>Status</th>
+                  <th>Time Assigned</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="completedJobsBody"></tbody>
+            </table>
+          </div>
+
+          <div id="completedJobsPagination" class="mt-2"></div>
+        </div>
+      </div>
+
     </div>
 
   </div>
@@ -299,684 +326,8 @@
   <!-- PapaParse for CSV -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
-  <!-- APP SCRIPT -->
-  <script>
-    // =========================
-    // GLOBAL TRAINING & JOB DATA
-    // =========================
-
-    // operators = [ { name, trainings: { [partNumber]: level } } ]
-    let operators = [];
-    let partsByNumber = {}; // optional meta
-    let lastScannedPartNumber = null;
-
-    // job assignments
-    // { jobNumber, partNumber, operator, status, assignedAt }
-    let assignments = [];
-
-    // pagination for assignments
-    const ASSIGNMENTS_PAGE_SIZE = 10;
-    let currentAssignmentPage = 1;
-
-    // modal instance
-    let editAssignmentModal = null;
-
-    // ====== CSV CONFIG (MATCHES YOUR SHEET) ======
-    const HEADER_ROW_INDEX = 12;      // row 13 in Excel
-    const FIRST_DATA_ROW_INDEX = 13;  // first data row
-    const OPERATOR_COL_START = 16;    // "Eden" column
-    const OPERATOR_COL_END = 38;      // "Nikki, NPI" column
-
-    // ====== TRAINING LEVEL LOGIC ======
-    function isLevelTrained(level) {
-      if (!level) return false;
-      const v = level.trim().toLowerCase();
-      return v === "trained" || v === "trainer 1" || v === "trainer 2";
-    }
-
-    // Shared helper: get trained operators for a part
-    function getTrainedOperatorsForPart(partNumber) {
-      const pn = (partNumber || "").trim();
-      if (!pn) return [];
-
-      return operators
-        .map(op => {
-          const level = op.trainings[pn];
-          if (!isLevelTrained(level)) return null;
-          return { name: op.name, level };
-        })
-        .filter(Boolean)
-        .sort((a, b) => a.name.localeCompare(b.name));
-    }
-
-    // =========================
-    // DOM ELEMENTS
-    // =========================
-    const csvInput = document.getElementById("csvInput");
-    const loadStatus = document.getElementById("loadStatus");
-
-    const scanInput = document.getElementById("scanInput");
-    const scanResult = document.getElementById("scanResult");
-
-    const operatorSelect = document.getElementById("operatorSelect");
-    const jobNumberInput = document.getElementById("jobNumberInput");
-    const assignJobBtn = document.getElementById("assignJobBtn");
-    const operatorInfo = document.getElementById("operatorInfo");
-
-    const dailyLogDate = document.getElementById("dailyLogDate");
-    const dailyLogList = document.getElementById("dailyLogList");
-    const logSearchInput = document.getElementById("logSearchInput");
-
-    const assignmentTableBody = document.getElementById("assignmentTableBody");
-    const assignmentPagination = document.getElementById("assignmentPagination");
-
-    // Edit modal elements
-    const editAssignmentIndexInput = document.getElementById("editAssignmentIndex");
-    const editJobNumberInput = document.getElementById("editJobNumber");
-    const editPartNumberInput = document.getElementById("editPartNumber");
-    const editOperatorSelect = document.getElementById("editOperatorSelect");
-    const editStatusSelect = document.getElementById("editStatusSelect");
-    const editInitialsInput = document.getElementById("editInitialsInput");
-    const editErrorMsg = document.getElementById("editErrorMsg");
-
-    // =========================
-    // CSV LOAD & PARSE
-    // =========================
-
-    csvInput.addEventListener("change", () => {
-      const file = csvInput.files[0];
-      if (!file) return;
-
-      loadStatus.textContent = "Loading and parsing CSV...";
-      parseTrainingCsv(file);
-    });
-
-    function parseTrainingCsv(file) {
-      Papa.parse(file, {
-        header: false,
-        skipEmptyLines: true,
-        complete: (results) => {
-          try {
-            buildTrainingData(results.data);
-            loadStatus.textContent = "Training sheet loaded. Ready to scan parts.";
-          } catch (err) {
-            console.error(err);
-            loadStatus.textContent = "Error parsing CSV. Check console for details.";
-          }
-        }
-      });
-    }
-
-    function buildTrainingData(rows) {
-      operators = [];
-      partsByNumber = {};
-
-      const headerRow = rows[HEADER_ROW_INDEX];
-      if (!headerRow) {
-        throw new Error("Header row not found at index " + HEADER_ROW_INDEX);
-      }
-
-      // operator names from header row
-      const operatorNames = headerRow
-        .slice(OPERATOR_COL_START, OPERATOR_COL_END + 1)
-        .map(name => (name || "").toString().trim())
-        .filter(name => name !== "");
-
-      const operatorsMap = {}; // name -> { name, trainings: {} }
-
-      for (let r = FIRST_DATA_ROW_INDEX; r < rows.length; r++) {
-        const row = rows[r];
-        if (!row) continue;
-
-        const partNumber = (row[2] || "").toString().trim(); // Col 2 = Part Number
-        if (!partNumber) continue;
-
-        // Optional meta
-        const family = (row[1] || "").toString().trim();
-        const commonName = (row[3] || "").toString().trim();
-        const description = (row[4] || "").toString().trim();
-        const status = (row[7] || "").toString().trim();
-
-        if (!partsByNumber[partNumber]) {
-          partsByNumber[partNumber] = {
-            partNumber,
-            family,
-            commonName,
-            description,
-            status
-          };
-        }
-
-        operatorNames.forEach((opName, idx) => {
-          const colIndex = OPERATOR_COL_START + idx;
-          const cell = (row[colIndex] || "").toString().trim();
-          if (!cell) return;
-
-          if (!operatorsMap[opName]) {
-            operatorsMap[opName] = {
-              name: opName,
-              trainings: {}
-            };
-          }
-
-          operatorsMap[opName].trainings[partNumber] = cell;
-        });
-      }
-
-      operators = Object.values(operatorsMap);
-      console.log("Loaded operators:", operators);
-    }
-
-    // =========================
-    // SCAN → SHOW TRAINED OPERATORS
-    // =========================
-
-    function processScan() {
-      const partNumber = scanInput.value.trim();
-      if (!partNumber) {
-        showScanMessage("Please enter or scan a part number.", true);
-        resetOperatorDropdown("Scan a part first");
-        lastScannedPartNumber = null;
-        updateAssignButtonState();
-        return;
-      }
-
-      if (operators.length === 0) {
-        showScanMessage("Upload a training CSV first.", true);
-        resetOperatorDropdown("Upload training sheet first");
-        lastScannedPartNumber = null;
-        updateAssignButtonState();
-        return;
-      }
-
-      // Use shared helper
-      const trainedOperators = getTrainedOperatorsForPart(partNumber);
-
-      if (trainedOperators.length === 0) {
-        showScanMessage(
-          `No trained operators found for part "${partNumber}".`,
-          true
-        );
-        resetOperatorDropdown("No trained operators for this part");
-        lastScannedPartNumber = partNumber; // still remember the part
-        updateAssignButtonState();
-        return;
-      }
-
-      // Success – update UI
-      lastScannedPartNumber = partNumber;
-      showScanMessage(
-        `Found ${trainedOperators.length} trained operator(s) for part "${partNumber}".`,
-        false
-      );
-      populateOperatorDropdown(trainedOperators, partNumber);
-      updateAssignButtonState();
-    }
-
-    function showScanMessage(message, isError) {
-      scanResult.classList.remove("d-none", "alert-secondary", "alert-danger");
-      scanResult.classList.add(isError ? "alert-danger" : "alert-secondary");
-      scanResult.textContent = message;
-    }
-
-    function resetOperatorDropdown(placeholderText) {
-      operatorSelect.innerHTML = "";
-      const opt = document.createElement("option");
-      opt.value = "";
-      opt.textContent = placeholderText || "Scan a part first";
-      operatorSelect.appendChild(opt);
-      operatorSelect.disabled = true;
-      operatorInfo.textContent = "";
-    }
-
-    function populateOperatorDropdown(trainedOperators, partNumber) {
-      operatorSelect.innerHTML = "";
-
-      const baseOpt = document.createElement("option");
-      baseOpt.value = "";
-      baseOpt.textContent = "Select operator";
-      operatorSelect.appendChild(baseOpt);
-
-      trainedOperators.forEach(op => {
-        const opt = document.createElement("option");
-        opt.value = op.name;
-        opt.textContent = `${op.name} (${op.level})`;
-        operatorSelect.appendChild(opt);
-      });
-
-      operatorSelect.disabled = false;
-
-      operatorInfo.textContent =
-        `Operators shown are trained on part "${partNumber}".`;
-    }
-
-    // Allow Enter key to trigger scan
-    scanInput.addEventListener("keyup", (e) => {
-      if (e.key === "Enter") {
-        processScan();
-      }
-    });
-
-    // =========================
-    // ASSIGN JOB LOGIC
-    // =========================
-
-    function updateAssignButtonState() {
-      const operator = operatorSelect.value;
-      const jobNumber = jobNumberInput.value.trim();
-      const hasPart = !!lastScannedPartNumber;
-
-      // Enable only if: part scanned, operator selected, job number entered
-      assignJobBtn.disabled = !(hasPart && operator && jobNumber);
-    }
-
-    operatorSelect.addEventListener("change", updateAssignButtonState);
-    jobNumberInput.addEventListener("keyup", updateAssignButtonState);
-    jobNumberInput.addEventListener("change", updateAssignButtonState);
-
-    function assignJob() {
-      const operator = operatorSelect.value;
-      const jobNumber = jobNumberInput.value.trim();
-      const partNumber = lastScannedPartNumber;
-
-      if (!partNumber) {
-        operatorInfo.textContent = "Scan a part before assigning a job.";
-        return;
-      }
-      if (!operator) {
-        operatorInfo.textContent = "Select an operator before assigning a job.";
-        return;
-      }
-      if (!jobNumber) {
-        operatorInfo.textContent = "Enter a job number before assigning.";
-        return;
-      }
-
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      const assignedAt = now.toISOString();
-
-      const assignment = {
-        jobNumber,
-        partNumber,
-        operator,
-        status: "Assigned",
-        assignedAt
-      };
-
-      assignments.push(assignment);
-      console.log("New assignment:", assignment);
-
-      // Log into today's daily log
-      const dateKey = formatDateKey(currentLogDate);
-      if (!DATA.dailyLogs[dateKey]) {
-        DATA.dailyLogs[dateKey] = [];
-      }
-
-      DATA.dailyLogs[dateKey].push(
-        `${timeStr} — Assigned job ${jobNumber} (part ${partNumber}) to ${operator}`
-      );
-      renderDailyLog();
-
-      // Refresh assignment list view
-      renderAssignments(currentAssignmentPage);
-
-      // Feedback
-      operatorInfo.textContent =
-        `Assigned job ${jobNumber} (part ${partNumber}) to ${operator}.`;
-
-      // Clear job number for next assignment
-      jobNumberInput.value = "";
-      updateAssignButtonState();
-    }
-
-    // =========================
-    // JOB ASSIGNMENTS TABLE + PAGINATION
-    // =========================
-
-    function renderAssignments(page = 1) {
-      if (!assignmentTableBody || !assignmentPagination) return;
-
-      assignmentTableBody.innerHTML = "";
-      assignmentPagination.innerHTML = "";
-
-      const total = assignments.length;
-
-      if (total === 0) {
-        assignmentTableBody.innerHTML = `
-          <tr>
-            <td colspan="6" class="text-muted">
-              No jobs assigned yet.
-            </td>
-          </tr>
-        `;
-        return;
-      }
-
-      const totalPages = Math.ceil(total / ASSIGNMENTS_PAGE_SIZE);
-      const safePage = Math.min(Math.max(page, 1), totalPages);
-      currentAssignmentPage = safePage;
-
-      const startIndex = (safePage - 1) * ASSIGNMENTS_PAGE_SIZE;
-      const endIndex = Math.min(startIndex + ASSIGNMENTS_PAGE_SIZE, total);
-      const pageItems = assignments.slice(startIndex, endIndex);
-
-      pageItems.forEach((a, idxOnPage) => {
-        const globalIndex = startIndex + idxOnPage;
-        const dt = new Date(a.assignedAt);
-        const timeStr = dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-        const dateStr = dt.toLocaleDateString();
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${a.jobNumber}</td>
-          <td>${a.partNumber}</td>
-          <td>${a.operator}</td>
-          <td>${a.status}</td>
-          <td>${dateStr} ${timeStr}</td>
-          <td>
-            <button
-              class="btn btn-sm btn-outline-primary"
-              onclick="openEditAssignment(${globalIndex})">
-              Edit
-            </button>
-          </td>
-        `;
-        assignmentTableBody.appendChild(tr);
-      });
-
-      // Build pagination controls
-      const row = document.createElement("div");
-      row.className = "d-flex justify-content-between align-items-center";
-
-      const infoSpan = document.createElement("span");
-      infoSpan.className = "small text-muted";
-      infoSpan.textContent =
-        `Showing ${startIndex + 1}-${endIndex} of ${total} job(s)`;
-      row.appendChild(infoSpan);
-
-      const navDiv = document.createElement("div");
-      const ul = document.createElement("ul");
-      ul.className = "pagination pagination-sm mb-0";
-
-      function addPage(label, targetPage, disabled = false, active = false) {
-        const li = document.createElement("li");
-        li.className = "page-item";
-        if (disabled) li.classList.add("disabled");
-        if (active) li.classList.add("active");
-
-        const a = document.createElement("a");
-        a.className = "page-link";
-        a.href = "#";
-        a.textContent = label;
-
-        if (!disabled && !active) {
-          a.addEventListener("click", (e) => {
-            e.preventDefault();
-            renderAssignments(targetPage);
-          });
-        }
-
-        li.appendChild(a);
-        ul.appendChild(li);
-      }
-
-      // Prev
-      addPage("«", safePage - 1, safePage === 1, false);
-
-      // Page numbers
-      for (let p = 1; p <= totalPages; p++) {
-        addPage(String(p), p, false, p === safePage);
-      }
-
-      // Next
-      addPage("»", safePage + 1, safePage === totalPages, false);
-
-      navDiv.appendChild(ul);
-      row.appendChild(navDiv);
-
-      assignmentPagination.appendChild(row);
-    }
-
-    // =========================
-    // EDIT ASSIGNMENT MODAL LOGIC
-    // =========================
-
-    function openEditAssignment(index) {
-      const assignment = assignments[index];
-      if (!assignment) return;
-
-      editAssignmentIndexInput.value = index;
-      editJobNumberInput.value = assignment.jobNumber;
-      editPartNumberInput.value = assignment.partNumber;
-
-      // Get operators trained on THIS part
-      const trainedOperators = getTrainedOperatorsForPart(assignment.partNumber);
-
-      editOperatorSelect.innerHTML = "";
-      const baseOpt = document.createElement("option");
-      baseOpt.value = "";
-      baseOpt.textContent = "(Select operator)";
-      editOperatorSelect.appendChild(baseOpt);
-
-      if (trainedOperators.length > 0) {
-        // Show only trained operators for this part
-        trainedOperators.forEach(op => {
-          const opt = document.createElement("option");
-          opt.value = op.name;
-          opt.textContent = `${op.name} (${op.level})`;
-          editOperatorSelect.appendChild(opt);
-        });
-
-        // Ensure current operator is selectable even if not in trained list
-        const isCurrentInList = trainedOperators.some(op => op.name === assignment.operator);
-        if (!isCurrentInList && assignment.operator) {
-          const opt = document.createElement("option");
-          opt.value = assignment.operator;
-          opt.textContent = `${assignment.operator} (not in trained list)`;
-          editOperatorSelect.appendChild(opt);
-        }
-      } else {
-        // Fallback: no trained operators found for this part
-        const opt = document.createElement("option");
-        opt.value = assignment.operator;
-        opt.textContent = `${assignment.operator} (no trained list for this part)`;
-        editOperatorSelect.appendChild(opt);
-      }
-
-      editOperatorSelect.value = assignment.operator;
-      editStatusSelect.value = assignment.status || "Assigned";
-      editInitialsInput.value = "";
-      editErrorMsg.textContent = "";
-
-      if (!editAssignmentModal) {
-        editAssignmentModal = new bootstrap.Modal(
-          document.getElementById("editAssignmentModal")
-        );
-      }
-      editAssignmentModal.show();
-    }
-
-    function saveAssignmentChanges() {
-      const index = parseInt(editAssignmentIndexInput.value, 10);
-      const assignment = assignments[index];
-      if (!assignment) return;
-
-      const initials = editInitialsInput.value.trim();
-      if (!initials) {
-        editErrorMsg.textContent = "Initials are required to save changes.";
-        return;
-      }
-
-      const newOperator = editOperatorSelect.value || assignment.operator;
-      const newStatus = editStatusSelect.value || assignment.status;
-
-      const oldOperator = assignment.operator;
-      const oldStatus = assignment.status;
-
-      // If no changes, just close.
-      if (newOperator === oldOperator && newStatus === oldStatus) {
-        editErrorMsg.textContent = "";
-        if (editAssignmentModal) editAssignmentModal.hide();
-        return;
-      }
-
-      assignment.operator = newOperator;
-      assignment.status = newStatus;
-
-      // Log change to daily log
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      const dateKey = formatDateKey(currentLogDate);
-      if (!DATA.dailyLogs[dateKey]) {
-        DATA.dailyLogs[dateKey] = [];
-      }
-
-      const changes = [];
-      if (oldOperator !== newOperator) {
-        changes.push(`operator ${oldOperator} → ${newOperator}`);
-      }
-      if (oldStatus !== newStatus) {
-        changes.push(`status ${oldStatus} → ${newStatus}`);
-      }
-
-      const changeSummary = changes.join(", ");
-
-      DATA.dailyLogs[dateKey].push(
-        `${timeStr} — [${initials}] updated job ${assignment.jobNumber} (${assignment.partNumber}): ${changeSummary}`
-      );
-
-      renderDailyLog();
-      renderAssignments(currentAssignmentPage);
-
-      editErrorMsg.textContent = "";
-      if (editAssignmentModal) editAssignmentModal.hide();
-    }
-
-    function deleteAssignment() {
-      const index = parseInt(editAssignmentIndexInput.value, 10);
-      const assignment = assignments[index];
-      if (!assignment) return;
-
-      const initials = editInitialsInput.value.trim();
-      if (!initials) {
-        editErrorMsg.textContent = "Initials are required to delete a job.";
-        return;
-      }
-
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      const dateKey = formatDateKey(currentLogDate);
-      if (!DATA.dailyLogs[dateKey]) {
-        DATA.dailyLogs[dateKey] = [];
-      }
-
-      DATA.dailyLogs[dateKey].push(
-        `${timeStr} — [${initials}] deleted job ${assignment.jobNumber} (part ${assignment.partNumber}) previously assigned to ${assignment.operator} [status: ${assignment.status}]`
-      );
-
-      // Remove assignment
-      assignments.splice(index, 1);
-
-      // Adjust page if needed
-      const total = assignments.length;
-      const totalPages = Math.max(1, Math.ceil(total / ASSIGNMENTS_PAGE_SIZE));
-      if (currentAssignmentPage > totalPages) {
-        currentAssignmentPage = totalPages;
-      }
-
-      renderDailyLog();
-      renderAssignments(currentAssignmentPage);
-
-      editErrorMsg.textContent = "";
-      if (editAssignmentModal) editAssignmentModal.hide();
-    }
-
-    // =========================
-    // SIMPLE DAILY LOG VIEWER
-    // =========================
-
-    const DATA = {
-      dailyLogs: {
-        // Example seed data:
-        "2025-11-18": [
-          "07:30 — John scanned dishwasher rack",
-          "08:15 — Sarah picked parts for order #102",
-          "09:00 — David logged completed install"
-        ],
-        "2025-11-19": [
-          "06:45 — John checked inventory count",
-          "07:20 — Sarah replaced top rack wheel",
-          "08:05 — David logged control panel test"
-        ]
-      }
-    };
-
-    let currentLogDate = new Date();
-
-    function formatDateKey(date) {
-      return date.toISOString().slice(0, 10);
-    }
-
-    function formatDateDisplay(date) {
-      return date.toLocaleDateString(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric"
-      });
-    }
-
-    function changeLogDay(offsetDays) {
-      currentLogDate.setDate(currentLogDate.getDate() + offsetDays);
-      if (logSearchInput) logSearchInput.value = "";
-      renderDailyLog();
-    }
-
-    function renderDailyLog() {
-      if (!dailyLogDate || !dailyLogList) return;
-
-      const dateKey = formatDateKey(currentLogDate);
-      const allEntries = DATA.dailyLogs[dateKey] || [];
-      const searchTerm = (logSearchInput?.value || "").trim().toLowerCase();
-
-      dailyLogDate.textContent = formatDateDisplay(currentLogDate);
-      dailyLogList.innerHTML = "";
-
-      const entries = searchTerm
-        ? allEntries.filter(e => e.toLowerCase().includes(searchTerm))
-        : allEntries;
-
-      if (entries.length === 0) {
-        dailyLogList.innerHTML = `
-          <li class="list-group-item text-muted">
-            No log entries for this day.
-          </li>
-        `;
-        return;
-      }
-
-      entries.forEach(entry => {
-        const li = document.createElement("li");
-        li.className = "list-group-item";
-        li.textContent = entry;
-        dailyLogList.appendChild(li);
-      });
-    }
-
-    // =========================
-    // INIT
-    // =========================
-
-    document.addEventListener("DOMContentLoaded", () => {
-      resetOperatorDropdown("Upload training + scan a part");
-      renderDailyLog();
-      renderAssignments(); // show "no jobs assigned" initially
-      updateAssignButtonState();
-
-      editAssignmentModal = new bootstrap.Modal(
-        document.getElementById("editAssignmentModal")
-      );
-    });
-  </script>
+  <!-- App JS -->
+  <script src="app.js"></script>
 
 </body>
 
