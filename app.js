@@ -71,14 +71,6 @@ const activeJobsPagination = document.getElementById("activeJobsPagination");
 const completedJobsBody = document.getElementById("completedJobsBody");
 const completedJobsPagination = document.getElementById("completedJobsPagination");
 
-// Operators summary page
-const operatorsSummaryBody = document.getElementById("operatorsSummaryBody");
-
-// Tabs
-const mainTabBtn = document.getElementById("mainTab");
-const tickTabBtn = document.getElementById("tickTab");
-const operatorsTabBtn = document.getElementById("operatorsTab");
-
 // Edit modal elements
 const editAssignmentIndexInput = document.getElementById("editAssignmentIndex");
 const editJobNumberInput = document.getElementById("editJobNumber");
@@ -89,7 +81,7 @@ const editInitialsInput = document.getElementById("editInitialsInput");
 const editErrorMsg = document.getElementById("editErrorMsg");
 
 // =========================
-– CSV LOAD & PARSE
+// CSV LOAD & PARSE
 // =========================
 
 csvInput.addEventListener("change", () => {
@@ -174,43 +166,6 @@ function buildTrainingData(rows) {
 
   operators = Object.values(operatorsMap);
   console.log("Loaded operators:", operators);
-
-  // Update operator summary in case that tab is open
-  renderOperatorSummary();
-}
-
-// =========================
-// PAGE SWITCHING (TABS)
-// =========================
-
-function showPage(page) {
-  const mainPage = document.getElementById("mainPage");
-  const tickPage = document.getElementById("tickPage");
-  const operatorsPage = document.getElementById("operatorsPage");
-  if (!mainPage || !tickPage || !operatorsPage) return;
-
-  // Hide all
-  mainPage.classList.add("d-none");
-  tickPage.classList.add("d-none");
-  operatorsPage.classList.add("d-none");
-
-  mainTabBtn.classList.remove("active");
-  tickTabBtn.classList.remove("active");
-  operatorsTabBtn.classList.remove("active");
-
-  if (page === "tick") {
-    tickPage.classList.remove("d-none");
-    tickTabBtn.classList.add("active");
-    renderAssignments();
-  } else if (page === "operators") {
-    operatorsPage.classList.remove("d-none");
-    operatorsTabBtn.classList.add("active");
-    renderOperatorSummary();
-  } else {
-    // default to main
-    mainPage.classList.remove("d-none");
-    mainTabBtn.classList.add("active");
-  }
 }
 
 // =========================
@@ -364,9 +319,8 @@ function assignJob() {
   );
   renderDailyLog();
 
-  // Refresh assignment list view and operator summary
+  // Refresh assignment list view
   renderAssignments();
-  renderOperatorSummary();
 
   // Feedback
   operatorInfo.textContent =
@@ -378,7 +332,7 @@ function assignJob() {
 }
 
 // =========================
-// JOB ASSIGNMENTS TABLES (TICK PAGE)
+// JOB ASSIGNMENTS TABLES
 // =========================
 
 function renderAssignments() {
@@ -535,83 +489,6 @@ function renderPagination(container, page, totalPages, onChangePage) {
 }
 
 // =========================
-// OPERATORS SUMMARY PAGE
-// =========================
-
-function renderOperatorSummary() {
-  if (!operatorsSummaryBody) return;
-
-  operatorsSummaryBody.innerHTML = "";
-
-  if (operators.length === 0) {
-    operatorsSummaryBody.innerHTML =
-      `<tr><td colspan="6" class="text-muted">
-        No operators loaded. Upload a training sheet to see operators.
-      </td></tr>`;
-    return;
-  }
-
-  // Initialize stats from operators list (so they show even with 0 jobs)
-  const stats = {};
-  operators.forEach(op => {
-    stats[op.name] = {
-      assigned: 0,
-      inProgress: 0,
-      completed: 0,
-      cancelled: 0
-    };
-  });
-
-  // Count from assignments
-  assignments.forEach(a => {
-    const name = a.operator || "";
-    if (!name) return;
-
-    if (!stats[name]) {
-      stats[name] = {
-        assigned: 0,
-        inProgress: 0,
-        completed: 0,
-        cancelled: 0
-      };
-    }
-
-    switch (a.status) {
-      case "Assigned":
-        stats[name].assigned++;
-        break;
-      case "In Progress":
-        stats[name].inProgress++;
-        break;
-      case "Completed":
-        stats[name].completed++;
-        break;
-      case "Cancelled":
-        stats[name].cancelled++;
-        break;
-    }
-  });
-
-  const names = Object.keys(stats).sort((a, b) => a.localeCompare(b));
-
-  names.forEach(name => {
-    const s = stats[name];
-    const total = s.assigned + s.inProgress + s.completed + s.cancelled;
-
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${name}</td>
-      <td>${s.assigned}</td>
-      <td>${s.inProgress}</td>
-      <td>${s.completed}</td>
-      <td>${s.cancelled}</td>
-      <td>${total}</td>
-    `;
-    operatorsSummaryBody.appendChild(tr);
-  });
-}
-
-// =========================
 // EDIT ASSIGNMENT MODAL LOGIC
 // =========================
 
@@ -721,7 +598,6 @@ function saveAssignmentChanges() {
 
   renderDailyLog();
   renderAssignments();
-  renderOperatorSummary();
 
   editErrorMsg.textContent = "";
   if (editAssignmentModal) editAssignmentModal.hide();
@@ -754,7 +630,6 @@ function deleteAssignment() {
 
   renderDailyLog();
   renderAssignments();
-  renderOperatorSummary();
 
   editErrorMsg.textContent = "";
   if (editAssignmentModal) editAssignmentModal.hide();
@@ -838,14 +713,10 @@ function renderDailyLog() {
 document.addEventListener("DOMContentLoaded", () => {
   resetOperatorDropdown("Upload training + scan a part");
   renderDailyLog();
-  renderAssignments();       // show empty states initially
-  renderOperatorSummary();   // show empty operator summary
+  renderAssignments(); // show empty states initially
   updateAssignButtonState();
 
   editAssignmentModal = new bootstrap.Modal(
     document.getElementById("editAssignmentModal")
   );
-
-  // Ensure Main tab/page is visible on load
-  showPage("main");
 });
