@@ -1,0 +1,15 @@
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* Daily log list height */
+.log-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/* Optional: tighter table spacing */
+table.table-sm td,
+table.table-sm th {
+  vertical-align: middle;
+}
