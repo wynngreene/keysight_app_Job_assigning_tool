@@ -1,390 +1,722 @@
-// ==============================
-// DATA MODEL & STORAGE
-// ==============================
-// Each record:
-// {
-//   employeeName,
-//   jobNumber,
-//   parts: [ { partNumber, qty }, ... ],
-//   notes,
-//   datePulled,
-//   timeRequested,
-//   inventoryCount,
-//   adjustCount,
-//   stockroomInitials,
-//   status: "Open" | "Fulfilled",
-//   fulfilledTime
-// }
+// =========================
+// GLOBAL TRAINING & JOB DATA
+// =========================
 
-const STORAGE_KEY = 'pouRecords';
-let records = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+// operators = [ { name, trainings: { [partNumber]: level } } ]
+let operators = [];
+let partsByNumber = {}; // optional meta
+let lastScannedPartNumber = null;
 
-// Temporary parts list while creating a PoU request
-let tempParts = [];
+// job assignments
+// { jobNumber, partNumber, operator, status, assignedAt }
+let assignments = [];
 
-// ==============================
+// pagination for assignments
+const ACTIVE_PAGE_SIZE = 10;
+const COMPLETED_PAGE_SIZE = 10;
+let activePage = 1;
+let completedPage = 1;
+
+// modal instance
+let editAssignmentModal = null;
+
+// ====== CSV CONFIG (MATCHES YOUR SHEET) ======
+const HEADER_ROW_INDEX = 12;      // row 13 in Excel
+const FIRST_DATA_ROW_INDEX = 13;  // first data row
+const OPERATOR_COL_START = 16;    // "Eden" column
+const OPERATOR_COL_END = 38;      // "Nikki, NPI" column
+
+// ====== TRAINING LEVEL LOGIC ======
+function isLevelTrained(level) {
+  if (!level) return false;
+  const v = level.trim().toLowerCase();
+  return v === "trained" || v === "trainer 1" || v === "trainer 2";
+}
+
+// Shared helper: get trained operators for a part
+function getTrainedOperatorsForPart(partNumber) {
+  const pn = (partNumber || "").trim();
+  if (!pn) return [];
+
+  return operators
+    .map(op => {
+      const level = op.trainings[pn];
+      if (!isLevelTrained(level)) return null;
+      return { name: op.name, level };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// =========================
 // DOM ELEMENTS
-// ==============================
+// =========================
+const csvInput = document.getElementById("csvInput");
+const loadStatus = document.getElementById("loadStatus");
 
-// PoU form
-const pouForm = document.getElementById('pouForm');
-const employeeNameInput = document.getElementById('employeeName');
-const jobNumberInput = document.getElementById('jobNumber');
-const notesInput = document.getElementById('notes');
-const datePulledInput = document.getElementById('datePulled');
-const todayBtn = document.getElementById('todayBtn');
+const scanInput = document.getElementById("scanInput");
+const scanResult = document.getElementById("scanResult");
 
-// Part row
-const partNumberInput = document.getElementById('partNumberInput');
-const quantityInput = document.getElementById('quantityInput');
-const addPartBtn = document.getElementById('addPartBtn');
-const partsList = document.getElementById('partsList');
+const operatorSelect = document.getElementById("operatorSelect");
+const jobNumberInput = document.getElementById("jobNumberInput");
+const assignJobBtn = document.getElementById("assignJobBtn");
+const operatorInfo = document.getElementById("operatorInfo");
 
-// Stockroom
-const requestSelect = document.getElementById('requestSelect');
-const requestSummary = document.getElementById('requestSummary');
-const stockroomForm = document.getElementById('stockroomForm');
-const inventoryCountInput = document.getElementById('inventoryCount');
-const adjustCountInput = document.getElementById('adjustCount');
-const stockroomInitialsInput = document.getElementById('stockroomInitials');
+const dailyLogDate = document.getElementById("dailyLogDate");
+const dailyLogList = document.getElementById("dailyLogList");
+const logSearchInput = document.getElementById("logSearchInput");
 
-// Admin
-const exportCsvBtn = document.getElementById('exportCsvBtn');
-const adminStats = document.getElementById('adminStats');
+const activeJobsBody = document.getElementById("activeJobsBody");
+const activeJobsPagination = document.getElementById("activeJobsPagination");
+const completedJobsBody = document.getElementById("completedJobsBody");
+const completedJobsPagination = document.getElementById("completedJobsPagination");
 
-// Table
-const recordsTbody = document.getElementById('recordsTbody');
+// Edit modal elements
+const editAssignmentIndexInput = document.getElementById("editAssignmentIndex");
+const editJobNumberInput = document.getElementById("editJobNumber");
+const editPartNumberInput = document.getElementById("editPartNumber");
+const editOperatorSelect = document.getElementById("editOperatorSelect");
+const editStatusSelect = document.getElementById("editStatusSelect");
+const editInitialsInput = document.getElementById("editInitialsInput");
+const editErrorMsg = document.getElementById("editErrorMsg");
 
-// ==============================
-// HELPERS
-// ==============================
+// =========================
+// CSV LOAD & PARSE
+// =========================
 
-function saveRecords() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+csvInput.addEventListener("change", () => {
+  const file = csvInput.files[0];
+  if (!file) return;
+
+  loadStatus.textContent = "Loading and parsing CSV...";
+  parseTrainingCsv(file);
+});
+
+function parseTrainingCsv(file) {
+  Papa.parse(file, {
+    header: false,
+    skipEmptyLines: true,
+    complete: (results) => {
+      try {
+        buildTrainingData(results.data);
+        loadStatus.textContent = "Training sheet loaded. Ready to scan parts.";
+      } catch (err) {
+        console.error(err);
+        loadStatus.textContent = "Error parsing CSV. Check console for details.";
+      }
+    }
+  });
 }
 
-function formatStatus(status) {
-  return status === 'Fulfilled' ? 'Fulfilled' : 'Open';
-}
+function buildTrainingData(rows) {
+  operators = [];
+  partsByNumber = {};
 
-function computeStats() {
-  const total = records.length;
-  const openCount = records.filter(r => r.status === 'Open').length;
-  const fulfilledCount = total - openCount;
-  return { total, openCount, fulfilledCount };
-}
-
-function formatNotes(notes) {
-  const n = (notes ?? '').toString().trim();
-  return n === '' ? 'N/A' : n;
-}
-
-function formatDateMMDDYYYY(dateStr) {
-  if (!dateStr) return '';
-  // If it's already MM/DD/YYYY, just return
-  if (dateStr.includes('/') && dateStr.split('/').length === 3) {
-    return dateStr;
+  const headerRow = rows[HEADER_ROW_INDEX];
+  if (!headerRow) {
+    throw new Error("Header row not found at index " + HEADER_ROW_INDEX);
   }
-  // If it's YYYY-MM-DD
-  const parts = dateStr.split('-');
-  if (parts.length === 3) {
-    const [y, m, d] = parts;
-    return `${m}/${d}/${y}`;
-  }
-  return dateStr; // fallback
-}
 
-// ==============================
-// RENDER TEMP PARTS (in PoU form)
-// ==============================
+  // operator names from header row
+  const operatorNames = headerRow
+    .slice(OPERATOR_COL_START, OPERATOR_COL_END + 1)
+    .map(name => (name || "").toString().trim())
+    .filter(name => name !== "");
 
-function renderTempParts() {
-  partsList.innerHTML = '';
-  tempParts.forEach((item, index) => {
-    const li = document.createElement('li');
-    li.textContent = `${item.partNumber} (${item.qty})`;
+  const operatorsMap = {}; // name -> { name, trainings: {} }
 
-    const delBtn = document.createElement('button');
-    delBtn.textContent = 'X';
-    delBtn.className = 'part-delete-btn';
-    delBtn.type = 'button';
-    delBtn.addEventListener('click', () => {
-      tempParts.splice(index, 1);
-      renderTempParts();
+  for (let r = FIRST_DATA_ROW_INDEX; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row) continue;
+
+    const partNumber = (row[2] || "").toString().trim(); // Col 2 = Part Number
+    if (!partNumber) continue;
+
+    // Optional meta
+    const family = (row[1] || "").toString().trim();
+    const commonName = (row[3] || "").toString().trim();
+    const description = (row[4] || "").toString().trim();
+    const status = (row[7] || "").toString().trim();
+
+    if (!partsByNumber[partNumber]) {
+      partsByNumber[partNumber] = {
+        partNumber,
+        family,
+        commonName,
+        description,
+        status
+      };
+    }
+
+    operatorNames.forEach((opName, idx) => {
+      const colIndex = OPERATOR_COL_START + idx;
+      const cell = (row[colIndex] || "").toString().trim();
+      if (!cell) return;
+
+      if (!operatorsMap[opName]) {
+        operatorsMap[opName] = {
+          name: opName,
+          trainings: {}
+        };
+      }
+
+      operatorsMap[opName].trainings[partNumber] = cell;
     });
-
-    li.appendChild(delBtn);
-    partsList.appendChild(li);
-  });
-}
-
-// ==============================
-// RENDER FUNCTIONS
-// ==============================
-
-function renderRecordsTable() {
-  recordsTbody.innerHTML = '';
-
-  records.forEach((rec, index) => {
-    const tr = document.createElement('tr');
-    const statusClass = rec.status === 'Fulfilled' ? 'status-fulfilled' : 'status-open';
-
-    const partsString = (rec.parts || [])
-      .map(p => `${p.partNumber} (${p.qty})`)
-      .join(', ');
-
-    tr.innerHTML = `
-      <td>${index + 1}</td>
-      <td>${rec.employeeName || ''}</td>
-      <td>${rec.jobNumber || ''}</td>
-      <td>${partsString}</td>
-      <td>${formatDateMMDDYYYY(rec.datePulled) || ''}</td>
-      <td>${rec.timeRequested || ''}</td>
-      <td>${formatNotes(rec.notes)}</td>
-      <td>${rec.inventoryCount ?? ''}</td>
-      <td>${rec.adjustCount ?? ''}</td>
-      <td>${rec.stockroomInitials ?? ''}</td>
-      <td class="${statusClass}">${formatStatus(rec.status)}</td>
-      <td>${rec.fulfilledTime || ''}</td>
-    `;
-
-    recordsTbody.appendChild(tr);
-  });
-}
-
-function renderStockroomSelect() {
-  const currentValue = requestSelect.value;
-  requestSelect.innerHTML = `
-    <option value="" disabled selected>Select a request</option>
-  `;
-
-  records.forEach((rec, index) => {
-    const labelDate = formatDateMMDDYYYY(rec.datePulled);
-    const label =
-      `${labelDate} | ${rec.jobNumber || ''} | ${rec.employeeName || ''}`;
-
-    const opt = document.createElement('option');
-    opt.value = index.toString();
-    opt.textContent = label;
-    requestSelect.appendChild(opt);
-  });
-
-  if (currentValue && requestSelect.querySelector(`option[value="${currentValue}"]`)) {
-    requestSelect.value = currentValue;
-    updateRequestSummary();
-  } else {
-    requestSelect.value = '';
-    requestSummary.textContent = '';
   }
+
+  operators = Object.values(operatorsMap);
+  console.log("Loaded operators:", operators);
 }
 
-function renderAdminStats() {
-  const { total, openCount, fulfilledCount } = computeStats();
-  adminStats.textContent =
-    `Total Records: ${total} | Open: ${openCount} | Fulfilled: ${fulfilledCount}`;
-}
+// =========================
+// SCAN → SHOW TRAINED OPERATORS
+// =========================
 
-function renderAll() {
-  renderRecordsTable();
-  renderStockroomSelect();
-  renderAdminStats();
-}
-
-// ==============================
-// STOCKROOM SUMMARY
-// ==============================
-
-function updateRequestSummary() {
-  const idxStr = requestSelect.value;
-  if (!idxStr) {
-    requestSummary.textContent = '';
-    return;
-  }
-  const idx = parseInt(idxStr, 10);
-  const rec = records[idx];
-  if (!rec) {
-    requestSummary.textContent = '';
+function processScan() {
+  const partNumber = scanInput.value.trim();
+  if (!partNumber) {
+    showScanMessage("Please enter or scan a part number.", true);
+    resetOperatorDropdown("Scan a part first");
+    lastScannedPartNumber = null;
+    updateAssignButtonState();
     return;
   }
 
-  const labelDate = formatDateMMDDYYYY(rec.datePulled);
-  const headerLine =
-    `${labelDate} | ${rec.jobNumber || ''} | ${rec.employeeName || ''}`;
+  if (operators.length === 0) {
+    showScanMessage("Upload a training CSV first.", true);
+    resetOperatorDropdown("Upload training sheet first");
+    lastScannedPartNumber = null;
+    updateAssignButtonState();
+    return;
+  }
 
-  const partsBlock = (rec.parts || [])
-    .map(p => ` - ${p.partNumber} (Qty: ${p.qty})`)
-    .join('\n');
+  // Use shared helper
+  const trainedOperators = getTrainedOperatorsForPart(partNumber);
 
-  requestSummary.textContent =
-    `${headerLine}\n\n` +
-    `Status: ${formatStatus(rec.status)}\n` +
-    `Time Requested: ${rec.timeRequested}\n` +
-    `Notes: ${formatNotes(rec.notes)}\n\n` +
-    `Parts:\n${partsBlock || 'None'}`;
+  if (trainedOperators.length === 0) {
+    showScanMessage(
+      `No trained operators found for part "${partNumber}".`,
+      true
+    );
+    resetOperatorDropdown("No trained operators for this part");
+    lastScannedPartNumber = partNumber; // still remember the part
+    updateAssignButtonState();
+    return;
+  }
+
+  // Success – update UI
+  lastScannedPartNumber = partNumber;
+  showScanMessage(
+    `Found ${trainedOperators.length} trained operator(s) for part "${partNumber}".`,
+    false
+  );
+  populateOperatorDropdown(trainedOperators, partNumber);
+  updateAssignButtonState();
 }
 
-// ==============================
-// EVENT HANDLERS
-// ==============================
+function showScanMessage(message, isError) {
+  scanResult.classList.remove("d-none", "alert-secondary", "alert-danger");
+  scanResult.classList.add(isError ? "alert-danger" : "alert-secondary");
+  scanResult.textContent = message;
+}
 
-// Today button
-todayBtn.addEventListener('click', () => {
-  const todayStr = new Date().toISOString().split('T')[0];
-  datePulledInput.value = todayStr;
+function resetOperatorDropdown(placeholderText) {
+  operatorSelect.innerHTML = "";
+  const opt = document.createElement("option");
+  opt.value = "";
+  opt.textContent = placeholderText || "Scan a part first";
+  operatorSelect.appendChild(opt);
+  operatorSelect.disabled = true;
+  operatorInfo.textContent = "";
+}
+
+function populateOperatorDropdown(trainedOperators, partNumber) {
+  operatorSelect.innerHTML = "";
+
+  const baseOpt = document.createElement("option");
+  baseOpt.value = "";
+  baseOpt.textContent = "Select operator";
+  operatorSelect.appendChild(baseOpt);
+
+  trainedOperators.forEach(op => {
+    const opt = document.createElement("option");
+    opt.value = op.name;
+    opt.textContent = `${op.name} (${op.level})`;
+    operatorSelect.appendChild(opt);
+  });
+
+  operatorSelect.disabled = false;
+
+  operatorInfo.textContent =
+    `Operators shown are trained on part "${partNumber}".`;
+}
+
+// Allow Enter key to trigger scan
+scanInput.addEventListener("keyup", (e) => {
+  if (e.key === "Enter") {
+    processScan();
+  }
 });
 
-// Add Part button
-addPartBtn.addEventListener('click', () => {
-  const part = partNumberInput.value.trim();
-  const qty = quantityInput.value.trim();
+// =========================
+// ASSIGN JOB LOGIC
+// =========================
 
-  if (!part || !qty) {
-    alert('Enter both Part Number and Quantity.');
-    return;
-  }
-
-  tempParts.push({ partNumber: part, qty: qty });
-  partNumberInput.value = '';
-  quantityInput.value = '';
-  renderTempParts();
-});
-
-// PoU form submit (Main User)
-pouForm.addEventListener('submit', (e) => {
-  e.preventDefault();
-
-  const employeeName = employeeNameInput.value.trim();
+function updateAssignButtonState() {
+  const operator = operatorSelect.value;
   const jobNumber = jobNumberInput.value.trim();
-  const notesRaw = notesInput.value.trim();
-  const notes = notesRaw === '' ? 'N/A' : notesRaw;
-  const datePulled = datePulledInput.value;
+  const hasPart = !!lastScannedPartNumber;
 
-  if (!employeeName || !jobNumber || !datePulled) {
-    alert('Please fill in Employee, Job Number, and Date Pulled.');
+  // Enable only if: part scanned, operator selected, job number entered
+  assignJobBtn.disabled = !(hasPart && operator && jobNumber);
+}
+
+operatorSelect.addEventListener("change", updateAssignButtonState);
+jobNumberInput.addEventListener("keyup", updateAssignButtonState);
+jobNumberInput.addEventListener("change", updateAssignButtonState);
+
+function assignJob() {
+  const operator = operatorSelect.value;
+  const jobNumber = jobNumberInput.value.trim();
+  const partNumber = lastScannedPartNumber;
+
+  if (!partNumber) {
+    operatorInfo.textContent = "Scan a part before assigning a job.";
+    return;
+  }
+  if (!operator) {
+    operatorInfo.textContent = "Select an operator before assigning a job.";
+    return;
+  }
+  if (!jobNumber) {
+    operatorInfo.textContent = "Enter a job number before assigning.";
     return;
   }
 
-  if (tempParts.length === 0) {
-    alert('Please add at least one part with quantity.');
-    return;
-  }
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const assignedAt = now.toISOString();
 
-  const timeRequested = new Date().toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
-
-  const newRecord = {
-    employeeName,
+  const assignment = {
     jobNumber,
-    parts: tempParts.map(p => ({ ...p })), // shallow copy
-    notes,
-    datePulled,
-    timeRequested,
-    inventoryCount: '',
-    adjustCount: '',
-    stockroomInitials: '',
-    status: 'Open',
-    fulfilledTime: ''
+    partNumber,
+    operator,
+    status: "Assigned",
+    assignedAt
   };
 
-  records.push(newRecord);
-  saveRecords();
-  renderAll();
+  assignments.push(assignment);
+  console.log("New assignment:", assignment);
 
-  // Reset temp parts + form
-  tempParts = [];
-  renderTempParts();
-  pouForm.reset();
-});
-
-// Stockroom dropdown change
-requestSelect.addEventListener('change', updateRequestSummary);
-
-// Stockroom form submit
-stockroomForm.addEventListener('submit', (e) => {
-  e.preventDefault();
-
-  const idxStr = requestSelect.value;
-  if (!idxStr) {
-    alert('Please select a PoU request to fulfill.');
-    return;
-  }
-  const idx = parseInt(idxStr, 10);
-  const rec = records[idx];
-  if (!rec) {
-    alert('Selected request not found.');
-    return;
+  // Log into today's daily log
+  const dateKey = formatDateKey(currentLogDate);
+  if (!DATA.dailyLogs[dateKey]) {
+    DATA.dailyLogs[dateKey] = [];
   }
 
-  const inventoryCount = inventoryCountInput.value;
-  const adjustCountRaw = adjustCountInput.value;
-  const stockroomInitials = stockroomInitialsInput.value.trim();
+  DATA.dailyLogs[dateKey].push(
+    `${timeStr} — Assigned job ${jobNumber} (part ${partNumber}) to ${operator}`
+  );
+  renderDailyLog();
 
-  if (!stockroomInitials) {
-    alert('Please enter stockroom initials.');
-    return;
-  }
+  // Refresh assignment list view
+  renderAssignments();
 
-  const adjustCount = adjustCountRaw === '' ? 'N/A' : adjustCountRaw;
+  // Feedback
+  operatorInfo.textContent =
+    `Assigned job ${jobNumber} (part ${partNumber}) to ${operator}.`;
 
-  rec.inventoryCount = inventoryCount || '';
-  rec.adjustCount = adjustCount;
-  rec.stockroomInitials = stockroomInitials;
-  rec.status = 'Fulfilled';
-  rec.fulfilledTime = new Date().toLocaleString();
+  // Clear job number for next assignment
+  jobNumberInput.value = "";
+  updateAssignButtonState();
+}
 
-  saveRecords();
-  renderAll();
+// =========================
+// JOB ASSIGNMENTS TABLES
+// =========================
 
-  stockroomForm.reset();
-});
+function renderAssignments() {
+  renderActiveAssignments();
+  renderCompletedAssignments();
+}
 
-// Export CSV
-exportCsvBtn.addEventListener('click', () => {
-  if (records.length === 0) {
-    alert('No records to export.');
+function renderActiveAssignments(page = activePage) {
+  activeJobsBody.innerHTML = "";
+  activeJobsPagination.innerHTML = "";
+
+  const activeList = assignments.filter(a =>
+    a.status === "Assigned" || a.status === "In Progress"
+  );
+
+  if (activeList.length === 0) {
+    activeJobsBody.innerHTML =
+      `<tr><td colspan="6" class="text-muted">No active jobs.</td></tr>`;
+    activePage = 1;
     return;
   }
 
-  let csv = 'Index,Employee,Job,Parts,Date Pulled,Time Requested,Notes,Inventory Count,Adjust Count,Stockroom Initials,Status,Fulfilled Time\n';
+  const total = activeList.length;
+  const totalPages = Math.ceil(total / ACTIVE_PAGE_SIZE);
+  activePage = Math.min(Math.max(page, 1), totalPages);
 
-  records.forEach((rec, idx) => {
-    const partsString = (rec.parts || [])
-      .map(p => `${p.partNumber} (Qty: ${p.qty})`)
-      .join('; ');
+  const start = (activePage - 1) * ACTIVE_PAGE_SIZE;
+  const end = Math.min(start + ACTIVE_PAGE_SIZE, total);
 
-    const row = [
-      idx + 1,
-      rec.employeeName,
-      rec.jobNumber,
-      partsString,
-      formatDateMMDDYYYY(rec.datePulled),
-      rec.timeRequested,
-      formatNotes(rec.notes),
-      rec.inventoryCount ?? '',
-      rec.adjustCount ?? '',
-      rec.stockroomInitials ?? '',
-      formatStatus(rec.status),
-      rec.fulfilledTime || ''
-    ]
-      .map(val => `"${(val ?? '').toString().replace(/"/g, '""')}"`)
-      .join(',');
+  activeList.slice(start, end).forEach(a => {
+    const realIndex = assignments.indexOf(a);
+    const dt = new Date(a.assignedAt);
+    const timeStr = dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const dateStr = dt.toLocaleDateString();
 
-    csv += row + '\n';
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${a.jobNumber}</td>
+      <td>${a.partNumber}</td>
+      <td>${a.operator}</td>
+      <td>${a.status}</td>
+      <td>${dateStr} ${timeStr}</td>
+      <td>
+        <button class="btn btn-sm btn-outline-primary"
+          onclick="openEditAssignment(${realIndex})">
+          Edit
+        </button>
+      </td>
+    `;
+    activeJobsBody.appendChild(tr);
   });
 
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'pou_logs.csv';
-  a.click();
-  URL.revokeObjectURL(url);
-});
+  renderPagination(
+    activeJobsPagination,
+    activePage,
+    totalPages,
+    (targetPage) => renderActiveAssignments(targetPage)
+  );
+}
 
-// ==============================
-// INITIAL RENDER
-// ==============================
-renderAll();
+function renderCompletedAssignments(page = completedPage) {
+  completedJobsBody.innerHTML = "";
+  completedJobsPagination.innerHTML = "";
+
+  const completedList = assignments.filter(a =>
+    a.status === "Completed" || a.status === "Cancelled"
+  );
+
+  if (completedList.length === 0) {
+    completedJobsBody.innerHTML =
+      `<tr><td colspan="6" class="text-muted">No completed jobs.</td></tr>`;
+    completedPage = 1;
+    return;
+  }
+
+  const total = completedList.length;
+  const totalPages = Math.ceil(total / COMPLETED_PAGE_SIZE);
+  completedPage = Math.min(Math.max(page, 1), totalPages);
+
+  const start = (completedPage - 1) * COMPLETED_PAGE_SIZE;
+  const end = Math.min(start + COMPLETED_PAGE_SIZE, total);
+
+  completedList.slice(start, end).forEach(a => {
+    const realIndex = assignments.indexOf(a);
+    const dt = new Date(a.assignedAt);
+    const timeStr = dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const dateStr = dt.toLocaleDateString();
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${a.jobNumber}</td>
+      <td>${a.partNumber}</td>
+      <td>${a.operator}</td>
+      <td>${a.status}</td>
+      <td>${dateStr} ${timeStr}</td>
+      <td>
+        <button class="btn btn-sm btn-outline-primary"
+          onclick="openEditAssignment(${realIndex})">
+          Edit
+        </button>
+      </td>
+    `;
+    completedJobsBody.appendChild(tr);
+  });
+
+  renderPagination(
+    completedJobsPagination,
+    completedPage,
+    totalPages,
+    (targetPage) => renderCompletedAssignments(targetPage)
+  );
+}
+
+function renderPagination(container, page, totalPages, onChangePage) {
+  container.innerHTML = "";
+  if (totalPages <= 1) return;
+
+  const row = document.createElement("div");
+  row.className = "d-flex justify-content-center";
+
+  const ul = document.createElement("ul");
+  ul.className = "pagination pagination-sm mb-0";
+
+  function addPage(label, targetPage, disabled = false, active = false) {
+    const li = document.createElement("li");
+    li.className = "page-item";
+    if (disabled) li.classList.add("disabled");
+    if (active) li.classList.add("active");
+
+    const a = document.createElement("a");
+    a.className = "page-link";
+    a.href = "#";
+    a.textContent = label;
+
+    if (!disabled && !active) {
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        onChangePage(targetPage);
+      });
+    }
+
+    li.appendChild(a);
+    ul.appendChild(li);
+  }
+
+  addPage("«", page - 1, page === 1, false);
+  for (let p = 1; p <= totalPages; p++) {
+    addPage(String(p), p, false, p === page);
+  }
+  addPage("»", page + 1, page === totalPages, false);
+
+  row.appendChild(ul);
+  container.appendChild(row);
+}
+
+// =========================
+// EDIT ASSIGNMENT MODAL LOGIC
+// =========================
+
+function openEditAssignment(index) {
+  const assignment = assignments[index];
+  if (!assignment) return;
+
+  editAssignmentIndexInput.value = index;
+  editJobNumberInput.value = assignment.jobNumber;
+  editPartNumberInput.value = assignment.partNumber;
+
+  // Get operators trained on THIS part
+  const trainedOperators = getTrainedOperatorsForPart(assignment.partNumber);
+
+  editOperatorSelect.innerHTML = "";
+  const baseOpt = document.createElement("option");
+  baseOpt.value = "";
+  baseOpt.textContent = "(Select operator)";
+  editOperatorSelect.appendChild(baseOpt);
+
+  if (trainedOperators.length > 0) {
+    // Show only trained operators for this part
+    trainedOperators.forEach(op => {
+      const opt = document.createElement("option");
+      opt.value = op.name;
+      opt.textContent = `${op.name} (${op.level})`;
+      editOperatorSelect.appendChild(opt);
+    });
+
+    // Ensure current operator is selectable even if not in trained list
+    const isCurrentInList = trainedOperators.some(op => op.name === assignment.operator);
+    if (!isCurrentInList && assignment.operator) {
+      const opt = document.createElement("option");
+      opt.value = assignment.operator;
+      opt.textContent = `${assignment.operator} (not in trained list)`;
+      editOperatorSelect.appendChild(opt);
+    }
+  } else {
+    // Fallback: no trained operators found for this part
+    const opt = document.createElement("option");
+    opt.value = assignment.operator;
+    opt.textContent = `${assignment.operator} (no trained list for this part)`;
+    editOperatorSelect.appendChild(opt);
+  }
+
+  editOperatorSelect.value = assignment.operator;
+  editStatusSelect.value = assignment.status || "Assigned";
+  editInitialsInput.value = "";
+  editErrorMsg.textContent = "";
+
+  if (!editAssignmentModal) {
+    editAssignmentModal = new bootstrap.Modal(
+      document.getElementById("editAssignmentModal")
+    );
+  }
+  editAssignmentModal.show();
+}
+
+function saveAssignmentChanges() {
+  const index = parseInt(editAssignmentIndexInput.value, 10);
+  const assignment = assignments[index];
+  if (!assignment) return;
+
+  const initials = editInitialsInput.value.trim();
+  if (!initials) {
+    editErrorMsg.textContent = "Initials are required to save changes.";
+    return;
+  }
+
+  const newOperator = editOperatorSelect.value || assignment.operator;
+  const newStatus = editStatusSelect.value || assignment.status;
+
+  const oldOperator = assignment.operator;
+  const oldStatus = assignment.status;
+
+  // If no changes, just close.
+  if (newOperator === oldOperator && newStatus === oldStatus) {
+    editErrorMsg.textContent = "";
+    if (editAssignmentModal) editAssignmentModal.hide();
+    return;
+  }
+
+  assignment.operator = newOperator;
+  assignment.status = newStatus;
+
+  // Log change to daily log
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const dateKey = formatDateKey(currentLogDate);
+  if (!DATA.dailyLogs[dateKey]) {
+    DATA.dailyLogs[dateKey] = [];
+  }
+
+  const changes = [];
+  if (oldOperator !== newOperator) {
+    changes.push(`operator ${oldOperator} → ${newOperator}`);
+  }
+  if (oldStatus !== newStatus) {
+    changes.push(`status ${oldStatus} → ${newStatus}`);
+  }
+
+  const changeSummary = changes.join(", ");
+
+  DATA.dailyLogs[dateKey].push(
+    `${timeStr} — [${initials}] updated job ${assignment.jobNumber} (${assignment.partNumber}): ${changeSummary}`
+  );
+
+  renderDailyLog();
+  renderAssignments();
+
+  editErrorMsg.textContent = "";
+  if (editAssignmentModal) editAssignmentModal.hide();
+}
+
+function deleteAssignment() {
+  const index = parseInt(editAssignmentIndexInput.value, 10);
+  const assignment = assignments[index];
+  if (!assignment) return;
+
+  const initials = editInitialsInput.value.trim();
+  if (!initials) {
+    editErrorMsg.textContent = "Initials are required to delete a job.";
+    return;
+  }
+
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const dateKey = formatDateKey(currentLogDate);
+  if (!DATA.dailyLogs[dateKey]) {
+    DATA.dailyLogs[dateKey] = [];
+  }
+
+  DATA.dailyLogs[dateKey].push(
+    `${timeStr} — [${initials}] deleted job ${assignment.jobNumber} (part ${assignment.partNumber}) previously assigned to ${assignment.operator} [status: ${assignment.status}]`
+  );
+
+  // Remove assignment
+  assignments.splice(index, 1);
+
+  renderDailyLog();
+  renderAssignments();
+
+  editErrorMsg.textContent = "";
+  if (editAssignmentModal) editAssignmentModal.hide();
+}
+
+// =========================
+// SIMPLE DAILY LOG VIEWER
+// =========================
+
+const DATA = {
+  dailyLogs: {
+    // Example seed data:
+    "2025-11-18": [
+      "07:30 — John scanned dishwasher rack",
+      "08:15 — Sarah picked parts for order #102",
+      "09:00 — David logged completed install"
+    ],
+    "2025-11-19": [
+      "06:45 — John checked inventory count",
+      "07:20 — Sarah replaced top rack wheel",
+      "08:05 — David logged control panel test"
+    ]
+  }
+};
+
+let currentLogDate = new Date();
+
+function formatDateKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDateDisplay(date) {
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  });
+}
+
+function changeLogDay(offsetDays) {
+  currentLogDate.setDate(currentLogDate.getDate() + offsetDays);
+  if (logSearchInput) logSearchInput.value = "";
+  renderDailyLog();
+}
+
+function renderDailyLog() {
+  if (!dailyLogDate || !dailyLogList) return;
+
+  const dateKey = formatDateKey(currentLogDate);
+  const allEntries = DATA.dailyLogs[dateKey] || [];
+  const searchTerm = (logSearchInput?.value || "").trim().toLowerCase();
+
+  dailyLogDate.textContent = formatDateDisplay(currentLogDate);
+  dailyLogList.innerHTML = "";
+
+  const entries = searchTerm
+    ? allEntries.filter(e => e.toLowerCase().includes(searchTerm))
+    : allEntries;
+
+  if (entries.length === 0) {
+    dailyLogList.innerHTML = `
+      <li class="list-group-item text-muted">
+        No log entries for this day.
+      </li>
+    `;
+    return;
+  }
+
+  entries.forEach(entry => {
+    const li = document.createElement("li");
+    li.className = "list-group-item";
+    li.textContent = entry;
+    dailyLogList.appendChild(li);
+  });
+}
+
+// =========================
+// INIT
+// =========================
+
+document.addEventListener("DOMContentLoaded", () => {
+  resetOperatorDropdown("Upload training + scan a part");
+  renderDailyLog();
+  renderAssignments(); // show empty states initially
+  updateAssignButtonState();
+
+  editAssignmentModal = new bootstrap.Modal(
+    document.getElementById("editAssignmentModal")
+  );
+});
