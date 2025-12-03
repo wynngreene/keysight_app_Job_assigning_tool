@@ -21,7 +21,7 @@ let completedPage = 1;
 let editAssignmentModal = null;
 
 // =========================
-// DAILY LOG DATA CONTAINER
+/* DAILY LOG DATA CONTAINER */
 // =========================
 
 const DATA = {
