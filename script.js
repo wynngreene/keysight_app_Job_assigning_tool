@@ -4,7 +4,7 @@
 
 // operators = [ { name, trainings: { [partNumber]: level } } ]
 let operators = [];
-let partsByNumber = {}; // optional meta
+let partsByNumber = {}; // optional meta for parts
 let lastScannedPartNumber = null;
 
 // job assignments
@@ -20,13 +20,34 @@ let completedPage = 1;
 // modal instance
 let editAssignmentModal = null;
 
-// ====== CSV CONFIG (MATCHES YOUR SHEET) ======
-const HEADER_ROW_INDEX = 12;      // row 13 in Excel
-const FIRST_DATA_ROW_INDEX = 13;  // first data row
-const OPERATOR_COL_START = 16;    // "Eden" column
-const OPERATOR_COL_END = 38;      // "Nikki, NPI" column
+// =========================
+// DAILY LOG DATA CONTAINER
+// =========================
 
-// ====== TRAINING LEVEL LOGIC ======
+const DATA = {
+  // dailyLogs: { "YYYY-MM-DD": [ "entry", ... ] }
+  dailyLogs: {
+    // seed examples (optional)
+    "2025-11-18": [
+      "07:30 — John scanned dishwasher rack",
+      "08:15 — Sarah picked parts for order #102",
+      "09:00 — David logged completed install"
+    ],
+    "2025-11-19": [
+      "06:45 — John checked inventory count",
+      "07:20 — Sarah replaced top rack wheel",
+      "08:05 — David logged control panel test"
+    ]
+  }
+};
+
+// current date for daily log view
+let currentLogDate = new Date();
+
+// =========================
+// TRAINING LEVEL LOGIC
+// =========================
+
 function isLevelTrained(level) {
   if (!level) return false;
   const v = level.trim().toLowerCase();
@@ -51,8 +72,10 @@ function getTrainedOperatorsForPart(partNumber) {
 // =========================
 // DOM ELEMENTS
 // =========================
+
 const csvInput = document.getElementById("csvInput");
 const loadStatus = document.getElementById("loadStatus");
+const readyBadge = document.getElementById("readyBadge");
 
 const scanInput = document.getElementById("scanInput");
 const scanResult = document.getElementById("scanResult");
@@ -88,7 +111,12 @@ csvInput.addEventListener("change", () => {
   const file = csvInput.files[0];
   if (!file) return;
 
-  loadStatus.textContent = "Loading and parsing CSV...";
+  // hide badge until success
+  readyBadge.classList.add("d-none");
+
+  loadStatus.className = "mt-2 small text-primary fw-bold";
+  loadStatus.textContent = `⏳ Loading "${file.name}"...`;
+
   parseTrainingCsv(file);
 });
 
@@ -99,44 +127,125 @@ function parseTrainingCsv(file) {
     complete: (results) => {
       try {
         buildTrainingData(results.data);
-        loadStatus.textContent = "Training sheet loaded. Ready to scan parts.";
+
+        loadStatus.className = "mt-2 small text-success fw-bold";
+        loadStatus.textContent =
+          `✔ Training sheet loaded — ${operators.length} operator(s) & ${Object.keys(partsByNumber).length} part(s).`;
+
+        // SHOW GREEN BADGE
+        readyBadge.classList.remove("d-none");
+        readyBadge.firstElementChild.textContent = "✔ Ready to Scan Parts";
+
       } catch (err) {
         console.error(err);
-        loadStatus.textContent = "Error parsing CSV. Check console for details.";
+
+        loadStatus.className = "mt-2 small text-danger fw-bold";
+        loadStatus.textContent = `✘ Error parsing CSV — ${err.message}`;
+
+        // HIDE BADGE ON ERROR
+        readyBadge.classList.add("d-none");
       }
     }
   });
 }
 
+// ---- CSV header detection helpers ----
+
+function normalizeHeader(val) {
+  return (val || "").toString().trim().toLowerCase();
+}
+
+function findHeaderRowIndex(rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row) continue;
+
+    const hasFamily = row.some(c => normalizeHeader(c) === "family");
+    const hasPartNumber = row.some(c => normalizeHeader(c) === "part number");
+
+    if (hasFamily && hasPartNumber) {
+      return i;
+    }
+  }
+  throw new Error("Could not find header row with 'Family' and 'Part Number'.");
+}
+
 function buildTrainingData(rows) {
+  // reset globals
   operators = [];
   partsByNumber = {};
 
-  const headerRow = rows[HEADER_ROW_INDEX];
-  if (!headerRow) {
-    throw new Error("Header row not found at index " + HEADER_ROW_INDEX);
+  // 1) Find header row dynamically
+  const headerRowIndex = findHeaderRowIndex(rows);
+  const headerRow = rows[headerRowIndex];
+
+  // 2) Find key column indices by header text
+  const colFamily = headerRow.findIndex(c => normalizeHeader(c) === "family");
+  const colPart = headerRow.findIndex(c => normalizeHeader(c) === "part number");
+  const colCommon = headerRow.findIndex(c => normalizeHeader(c) === "common name");
+  const colDesc = headerRow.findIndex(c => normalizeHeader(c) === "description");
+  const colStatus = headerRow.findIndex(c => normalizeHeader(c) === "status");
+
+  if (colPart === -1) {
+    throw new Error("Could not find 'Part Number' column.");
   }
 
-  // operator names from header row
-  const operatorNames = headerRow
-    .slice(OPERATOR_COL_START, OPERATOR_COL_END + 1)
-    .map(name => (name || "").toString().trim())
-    .filter(name => name !== "");
+  // 3) Figure out which columns are operator names (everything after status/etc.)
+  const nonOperatorHeaders = new Set([
+    "family",
+    "part number",
+    "common name",
+    "description",
+    "rohs",
+    "yearly demand hours",
+    "status",
+    "# trained",
+    "demand filter",
+    "trained hours",
+    "hr shortage",
+    "shortage filter",
+    "single trainer filter",
+    "single trained hours",
+    "single trained op",
+    "trainer 1",
+    "trainer 2",
+    "total trainers",
+    "trained",
+    "trainers"
+  ]);
+
+  const operatorColumns = [];
+  const operatorNames = [];
+
+  headerRow.forEach((cell, idx) => {
+    const norm = normalizeHeader(cell);
+    if (!norm) return;
+    if (nonOperatorHeaders.has(norm)) return;
+    if (colStatus !== -1 && idx <= colStatus) return;
+
+    operatorColumns.push(idx);
+    operatorNames.push((cell || "").toString().trim());
+  });
+
+  if (operatorColumns.length === 0) {
+    throw new Error("No operator columns detected in header row.");
+  }
 
   const operatorsMap = {}; // name -> { name, trainings: {} }
+  const firstDataRowIndex = headerRowIndex + 1;
 
-  for (let r = FIRST_DATA_ROW_INDEX; r < rows.length; r++) {
+  // 4) Walk all data rows and build parts + training map
+  for (let r = firstDataRowIndex; r < rows.length; r++) {
     const row = rows[r];
     if (!row) continue;
 
-    const partNumber = (row[2] || "").toString().trim(); // Col 2 = Part Number
+    const partNumber = (row[colPart] || "").toString().trim();
     if (!partNumber) continue;
 
-    // Optional meta
-    const family = (row[1] || "").toString().trim();
-    const commonName = (row[3] || "").toString().trim();
-    const description = (row[4] || "").toString().trim();
-    const status = (row[7] || "").toString().trim();
+    const family = colFamily >= 0 ? (row[colFamily] || "").toString().trim() : "";
+    const commonName = colCommon >= 0 ? (row[colCommon] || "").toString().trim() : "";
+    const description = colDesc >= 0 ? (row[colDesc] || "").toString().trim() : "";
+    const status = colStatus >= 0 ? (row[colStatus] || "").toString().trim() : "";
 
     if (!partsByNumber[partNumber]) {
       partsByNumber[partNumber] = {
@@ -148,8 +257,8 @@ function buildTrainingData(rows) {
       };
     }
 
-    operatorNames.forEach((opName, idx) => {
-      const colIndex = OPERATOR_COL_START + idx;
+    operatorColumns.forEach((colIndex, idx) => {
+      const opName = operatorNames[idx];
       const cell = (row[colIndex] || "").toString().trim();
       if (!cell) return;
 
@@ -165,7 +274,10 @@ function buildTrainingData(rows) {
   }
 
   operators = Object.values(operatorsMap);
-  console.log("Loaded operators:", operators);
+
+  console.log("Header row index:", headerRowIndex);
+  console.log("Operators detected:", operators.map(o => o.name));
+  console.log("Parts detected:", Object.keys(partsByNumber).length);
 }
 
 // =========================
@@ -190,7 +302,6 @@ function processScan() {
     return;
   }
 
-  // Use shared helper
   const trainedOperators = getTrainedOperatorsForPart(partNumber);
 
   if (trainedOperators.length === 0) {
@@ -204,7 +315,6 @@ function processScan() {
     return;
   }
 
-  // Success – update UI
   lastScannedPartNumber = partNumber;
   showScanMessage(
     `Found ${trainedOperators.length} trained operator(s) for part "${partNumber}".`,
@@ -246,7 +356,6 @@ function populateOperatorDropdown(trainedOperators, partNumber) {
   });
 
   operatorSelect.disabled = false;
-
   operatorInfo.textContent =
     `Operators shown are trained on part "${partNumber}".`;
 }
@@ -266,8 +375,6 @@ function updateAssignButtonState() {
   const operator = operatorSelect.value;
   const jobNumber = jobNumberInput.value.trim();
   const hasPart = !!lastScannedPartNumber;
-
-  // Enable only if: part scanned, operator selected, job number entered
   assignJobBtn.disabled = !(hasPart && operator && jobNumber);
 }
 
@@ -306,27 +413,21 @@ function assignJob() {
   };
 
   assignments.push(assignment);
-  console.log("New assignment:", assignment);
 
-  // Log into today's daily log
+  // Log into current day's daily log
   const dateKey = formatDateKey(currentLogDate);
   if (!DATA.dailyLogs[dateKey]) {
     DATA.dailyLogs[dateKey] = [];
   }
-
   DATA.dailyLogs[dateKey].push(
     `${timeStr} — Assigned job ${jobNumber} (part ${partNumber}) to ${operator}`
   );
   renderDailyLog();
-
-  // Refresh assignment list view
   renderAssignments();
 
-  // Feedback
   operatorInfo.textContent =
     `Assigned job ${jobNumber} (part ${partNumber}) to ${operator}.`;
 
-  // Clear job number for next assignment
   jobNumberInput.value = "";
   updateAssignButtonState();
 }
@@ -510,7 +611,6 @@ function openEditAssignment(index) {
   editOperatorSelect.appendChild(baseOpt);
 
   if (trainedOperators.length > 0) {
-    // Show only trained operators for this part
     trainedOperators.forEach(op => {
       const opt = document.createElement("option");
       opt.value = op.name;
@@ -518,7 +618,6 @@ function openEditAssignment(index) {
       editOperatorSelect.appendChild(opt);
     });
 
-    // Ensure current operator is selectable even if not in trained list
     const isCurrentInList = trainedOperators.some(op => op.name === assignment.operator);
     if (!isCurrentInList && assignment.operator) {
       const opt = document.createElement("option");
@@ -527,7 +626,6 @@ function openEditAssignment(index) {
       editOperatorSelect.appendChild(opt);
     }
   } else {
-    // Fallback: no trained operators found for this part
     const opt = document.createElement("option");
     opt.value = assignment.operator;
     opt.textContent = `${assignment.operator} (no trained list for this part)`;
@@ -564,7 +662,6 @@ function saveAssignmentChanges() {
   const oldOperator = assignment.operator;
   const oldStatus = assignment.status;
 
-  // If no changes, just close.
   if (newOperator === oldOperator && newStatus === oldStatus) {
     editErrorMsg.textContent = "";
     if (editAssignmentModal) editAssignmentModal.hide();
@@ -574,7 +671,6 @@ function saveAssignmentChanges() {
   assignment.operator = newOperator;
   assignment.status = newStatus;
 
-  // Log change to daily log
   const now = new Date();
   const timeStr = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const dateKey = formatDateKey(currentLogDate);
@@ -625,7 +721,6 @@ function deleteAssignment() {
     `${timeStr} — [${initials}] deleted job ${assignment.jobNumber} (part ${assignment.partNumber}) previously assigned to ${assignment.operator} [status: ${assignment.status}]`
   );
 
-  // Remove assignment
   assignments.splice(index, 1);
 
   renderDailyLog();
@@ -636,26 +731,8 @@ function deleteAssignment() {
 }
 
 // =========================
-// SIMPLE DAILY LOG VIEWER
+// DAILY LOG VIEWER
 // =========================
-
-const DATA = {
-  dailyLogs: {
-    // Example seed data:
-    "2025-11-18": [
-      "07:30 — John scanned dishwasher rack",
-      "08:15 — Sarah picked parts for order #102",
-      "09:00 — David logged completed install"
-    ],
-    "2025-11-19": [
-      "06:45 — John checked inventory count",
-      "07:20 — Sarah replaced top rack wheel",
-      "08:05 — David logged control panel test"
-    ]
-  }
-};
-
-let currentLogDate = new Date();
 
 function formatDateKey(date) {
   return date.toISOString().slice(0, 10);
@@ -713,7 +790,7 @@ function renderDailyLog() {
 document.addEventListener("DOMContentLoaded", () => {
   resetOperatorDropdown("Upload training + scan a part");
   renderDailyLog();
-  renderAssignments(); // show empty states initially
+  renderAssignments();
   updateAssignButtonState();
 
   editAssignmentModal = new bootstrap.Modal(
