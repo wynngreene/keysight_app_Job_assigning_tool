@@ -11,3 +11,20 @@ table.table-sm td,
 table.table-sm th {
   vertical-align: middle;
 }
+
+header {
+  font-size: 0.85rem;
+  letter-spacing: 0.3px;
+}
+
+footer {
+  font-size: 0.8rem;
+}
+
+footer .text-muted {
+  opacity: 0.75;
+}
+
+.bg-warning {s
+  background-color: #ffd968 !important;
+}
