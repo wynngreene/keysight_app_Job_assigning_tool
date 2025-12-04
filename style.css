@@ -7,11 +7,6 @@ body {
   overflow-y: auto;
 }
 
-table.table-sm td,
-table.table-sm th {
-  vertical-align: middle;
-}
-
 header {
   font-size: 0.85rem;
   letter-spacing: 0.3px;
@@ -25,6 +20,6 @@ footer .text-muted {
   opacity: 0.75;
 }
 
-.bg-warning {s
+.bg-warning {
   background-color: #ffd968 !important;
 }
